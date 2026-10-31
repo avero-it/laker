@@ -103,7 +103,7 @@ func setupCLI() *cobra.Command {
 	}
 	generate.Flags().StringP("output", "o", "laker-agent.yaml", "file to write")
 	generate.Flags().Bool("force", false, "Overwrite an existing file")
-	generate.Flags().Bool("discover", false, "Also add what laker-agent discover finds on this machine (disabled, no secret)")
+	generate.Flags().Bool("discover", false, "Also add what laker-agent config discover finds on this machine (disabled, no secret)")
 	validate := &cobra.Command{
 		Use:   "validate",
 		Short: "Check the configuration, then connect to every enabled adapter",
@@ -118,7 +118,6 @@ func setupCLI() *cobra.Command {
 	}
 	validate.Flags().Bool("offline", false, "Check the form only, connect to nothing")
 	validate.Flags().Bool("json", false, "Print the result as JSON")
-	configCmd.AddCommand(generate, validate)
 
 	discoverCmd := &cobra.Command{
 		Use:   "discover",
@@ -137,7 +136,8 @@ func setupCLI() *cobra.Command {
 	discoverCmd.Flags().Bool("json", false, "Print what was found as JSON (secrets never included) and write nothing")
 	discoverCmd.Flags().String("write", "", "configuration file to add the adapters to (default: the current one, or laker-agent.yaml)")
 	discoverCmd.Flags().Bool("interactive", false, "Ask questions on standard input even when it is not a terminal")
-	root.AddCommand(serveCmd, idCmd, runCmd, listCmd, versionCmd, configCmd, discoverCmd)
+	configCmd.AddCommand(generate, discoverCmd, validate)
+	root.AddCommand(serveCmd, idCmd, runCmd, listCmd, versionCmd, configCmd)
 	return root
 }
 

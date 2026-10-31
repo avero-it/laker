@@ -63,7 +63,7 @@ adapters:
 # on laker: common.agents.enabled: true (behind a TLS reverse proxy)
 # on the machine with the data:
 laker-agent config generate         # laker-agent.yaml: every adapter type, documented, disabled
-laker-agent discover                # finds mail accounts, folders, databases; asks before saving a secret
+laker-agent config discover         # finds mail accounts, folders, databases; asks before saving a secret
 laker-agent config validate         # connects to every enabled adapter
 laker-agent serve                   # prints its ID and waits
 # on laker:
@@ -90,7 +90,7 @@ derived from the lake and restorable (`laker restore`, or `laker reindex` + `lak
 | `laker views` | DuckDB SQL over the lake |
 | `laker reindex` · `laker state rebuild` · `laker snapshot` · `laker restore` | derived data |
 | `laker-agent serve\|id\|run\|list` | the agent |
-| `laker-agent config generate\|validate` · `laker-agent discover` | write and check its configuration |
+| `laker-agent config generate\|discover\|validate` | write and check its configuration |
 
 While `laker serve` runs, the CLI goes through its API.
 

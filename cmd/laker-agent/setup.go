@@ -218,7 +218,7 @@ func commandDiscover(configPath, write string, asJSON, interactive bool) {
 			current = append(current, c.Adapter)
 		}
 		writeConfig(write, common, current, exists)
-		fmt.Printf("\nadded %d adapters, disabled, to %s; no secret was saved. Run discover on a terminal to go through them.\n", len(fresh), write)
+		fmt.Printf("\nadded %d adapters, disabled, to %s; no secret was saved. Run laker-agent config discover on a terminal to go through them.\n", len(fresh), write)
 		return
 	}
 

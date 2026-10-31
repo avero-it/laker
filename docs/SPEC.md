@@ -431,7 +431,7 @@ adapters:                           # as in laker
   - { name: home-documents, enabled: true, type: fs, schedule: "0 0 3 * * *", params: { paths: [/home/me/Documents] } }
 ```
 
-Agent commands: `serve`, `id`, `run <adapter> [--dry-run]`, `list`, `discover`, `config generate|validate`,
+Agent commands: `serve`, `id`, `run <adapter> [--dry-run]`, `list`, `config generate|discover|validate`,
 `version`.
 
 ### 11.7 Writing the agent configuration
@@ -441,12 +441,12 @@ The configuration is the hard part for a single user or a small company, so the 
 - **`laker-agent config generate`** writes a complete file: the agent section guessed for this machine
   (name from the hostname, local time zone, data directory of the OS) and one documented, disabled adapter
   of every type, generated from the sources themselves (`sources.Stubs`), so it never drifts from the code.
-  `--discover` adds what `discover` finds, disabled.
+  `--discover` adds what `config discover` finds, disabled.
 - **`laker-agent config validate`** checks the form, then **probes every enabled adapter**: it logs in to
   the mailboxes and lists the selected folders, reads the directories (bounded count of files and bytes),
   connects to the databases, opens the read-only snapshot a run would use and lists the selected tables.
   `--offline` checks the form only; `--json` for scripts. The variables of disabled adapters need not be set.
-- **`laker-agent discover`** looks, read-only and locally, for: IMAP accounts of Thunderbird and Evolution;
+- **`laker-agent config discover`** looks, read-only and locally, for: IMAP accounts of Thunderbird and Evolution;
   the document folders (XDG names, so localized ones too); mounted network shares; Postgres (`.pgpass`,
   `PG*` variables, a server on 5432) and MySQL/MariaDB (`.my.cnf`, a server on 3306); Postgres, MySQL and
   MariaDB containers through the Docker socket, with the credentials of their environment. On a terminal
@@ -464,7 +464,7 @@ The credentials of an agent's sources live only on the agent's machine (`laker-a
 `laker-agent.env`, the environment). laker receives only blobs, Parquet files, index documents and run
 records. Run errors are scrubbed of anything that looks like a credential (URL passwords, MySQL DSN
 passwords, `password=` pairs) before they are recorded, logged or sent (`pkg/redact`); failed runs are
-reported to laker too, so its status page shows why. `discover` and `config validate` send nothing.
+reported to laker too, so its status page shows why. `config discover` and `config validate` send nothing.
 
 ### 11.9 Deployment
 

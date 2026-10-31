@@ -21,7 +21,7 @@ type GenParam struct {
 }
 
 // GenAdapter is an adapter written by `laker-agent config generate` or
-// `discover`, with comments.
+// `config discover`, with comments.
 type GenAdapter struct {
 	Name     string     `json:"name"`
 	Type     string     `json:"type"`
