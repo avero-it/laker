@@ -43,7 +43,7 @@
 | Parquet | `parquet-go/parquet-go` |
 | IMAP / MIME | `emersion/go-imap/v2`, `emersion/go-message` |
 | Databases | `jackc/pgx/v5`, `go-sql-driver/mysql` |
-| Search | `blevesearch/bleve/v2` (Italian analysis: the content of the lake is mostly Italian) |
+| Search | `blevesearch/bleve/v2` (Italian and English analysis of every text) |
 | Local state | `go.etcd.io/bbolt` |
 | Text extraction | `klippa-app/go-pdfium` (WebAssembly on wazero, no cgo), `archive/zip` + `encoding/xml` (DOCX/PPTX/ODF), `xuri/excelize` (XLSX), `golang.org/x/net/html` |
 | Web UI | standard library (`net/http`, `html/template`), `microcosm-cc/bluemonday` (mail HTML sanitizing) |
@@ -214,9 +214,14 @@ s3://<bucket>/
 ### 6.1 Index (Bleve)
 
 - Local (`<datadir>/index`), derived from the bucket: `laker reindex` rebuilds it from the Parquet files.
-- One analyzer for every text field and for free-text queries: split on every non-alphanumeric character
-  (so `contract.txt` and `anna.smith@example.com` are found word by word), then the Italian filters
-  (elision, stop words, light stemming).
+- **Italian and English**, often mixed in one message: every text field is indexed twice, with an Italian
+  analyzer under its name and an English one under `<name>_en` (only the first is stored), and every query
+  is rewritten to ask both, so `fattura` finds `fatture` and `invoice` finds `invoices`. Both analyzers split
+  on every non-alphanumeric character (so `contract.txt` and `anna.smith@example.com` are found word by
+  word) and fold accents (`perche` finds `perché`); Italian adds elision, stop words and light stemming,
+  English stop words and Snowball stemming. No language detection is needed.
+- The index records the version of its mapping; an index built by an older laker is refused with a message
+  asking for `laker reindex`. Matches found only through the English twin show their fragment unhighlighted.
 - **Mail documents**: `subject, from, to, cc, body, attachments, account, folder, date, size`.
 - **File documents**: `path, name, ext, size, mtime, source, content`.
 - **Queries**: Bleve query-string syntax: free words, `field:value`, `+must`, `-not`, `"phrases"`.

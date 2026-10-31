@@ -32,10 +32,13 @@ func commandReindex(configPath string) {
 
 	// take the lock of the current index before replacing it
 	old, err := bleve.Open(indexPath(cfg), cliWait)
-	if err != nil {
+	switch {
+	case errors.Is(err, bleve.ErrOutdated): // built by an older laker: replaced below
+	case err != nil:
 		fatalf("ERR071: %v", err)
+	default:
+		old.Close()
 	}
-	old.Close()
 	if err := os.RemoveAll(indexPath(cfg)); err != nil {
 		fatalf("ERR072: cannot remove the local index: %v", err)
 	}

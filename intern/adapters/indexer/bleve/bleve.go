@@ -13,6 +13,8 @@ import (
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/custom"
 	"github.com/blevesearch/bleve/v2/analysis/analyzer/keyword"
+	"github.com/blevesearch/bleve/v2/analysis/char/asciifolding"
+	"github.com/blevesearch/bleve/v2/analysis/lang/en"
 	"github.com/blevesearch/bleve/v2/analysis/lang/it"
 	"github.com/blevesearch/bleve/v2/analysis/token/lowercase"
 	"github.com/blevesearch/bleve/v2/analysis/tokenizer/regexp"
@@ -38,14 +40,25 @@ func Open(path string, timeout time.Duration) (*Index, error) {
 	cfg := map[string]interface{}{"bolt_timeout": timeout.String()}
 
 	idx, err := bleve.OpenUsing(path, cfg)
+	created := false
 	if errors.Is(err, bleve.ErrorIndexPathDoesNotExist) {
 		idx, err = bleve.NewUsing(path, newMapping(), bleve.Config.DefaultIndexType, bleve.Config.DefaultKVStore, cfg)
+		created = true
 	}
 	if err != nil {
 		if isTimeout(err) {
 			return nil, ErrBusy
 		}
 		return nil, fmt.Errorf("ERR511: cannot open the index %s: %w", path, err)
+	}
+	if created {
+		if err := idx.SetInternal([]byte(mappingKey), []byte(mappingVersion)); err != nil {
+			idx.Close()
+			return nil, fmt.Errorf("ERR51B: %w", err)
+		}
+	} else if v, _ := idx.GetInternal([]byte(mappingKey)); string(v) != mappingVersion {
+		idx.Close()
+		return nil, ErrOutdated
 	}
 	return &Index{idx: idx}, nil
 }
@@ -56,13 +69,24 @@ func isTimeout(err error) bool {
 	return errors.Is(err, bolterrors.ErrTimeout) || strings.HasSuffix(err.Error(), bolterrors.ErrTimeout.Error())
 }
 
+// textFields are the analyzed fields; each is indexed twice, in Italian
+// under its name and in English under name+"_en" (only the first is stored).
+var textFields = map[string]bool{
+	"from": true, "to": true, "cc": true, "subject": true, "body": true, "attachments": true,
+	"path": true, "name": true, "content": true,
+}
+
 func newMapping() mapping.IndexMapping {
-	text := func(analyzer string, store bool) *mapping.FieldMapping {
+	text := func(name, analyzer string, store bool) *mapping.FieldMapping {
 		f := bleve.NewTextFieldMapping()
+		f.Name = name
 		f.Analyzer = analyzer
 		f.Store = store
 		f.IncludeTermVectors = store // highlighting needs them
 		return f
+	}
+	bilingual := func(d *mapping.DocumentMapping, field string) {
+		d.AddFieldMappingsAt(field, text(field, italianAnalyzer, true), text(field+englishSuffix, englishAnalyzer, false))
 	}
 	kw := func() *mapping.FieldMapping {
 		f := bleve.NewKeywordFieldMapping()
@@ -73,16 +97,21 @@ func newMapping() mapping.IndexMapping {
 	num := bleve.NewNumericFieldMapping()
 
 	m := bleve.NewIndexMapping()
-	// One analyzer for every text field and for free-text queries, so a word
-	// matches the same way wherever it is: split on every non-alphanumeric
-	// character (the standard tokenizer keeps "contratto.txt" and
-	// "anna.smith@example.com" whole), then the Italian filters.
+	// The content is in Italian and English, often mixed in one message, so
+	// every text is analyzed both ways and every query asks both. Both split
+	// on every non-alphanumeric character (the standard tokenizer keeps
+	// "contract.txt" and "anna.smith@example.com" whole) and fold accents
+	// ("perche" finds "perché"), then apply the filters of their language.
 	must(m.AddCustomTokenizer(wordsTokenizer, map[string]interface{}{
 		"type": regexp.Name, "regexp": `[\p{L}\p{N}]+`,
 	}))
-	must(m.AddCustomAnalyzer(textAnalyzer, map[string]interface{}{
-		"type": custom.Name, "tokenizer": wordsTokenizer,
+	must(m.AddCustomAnalyzer(italianAnalyzer, map[string]interface{}{
+		"type": custom.Name, "char_filters": []string{asciifolding.Name}, "tokenizer": wordsTokenizer,
 		"token_filters": []string{lowercase.Name, it.ElisionName, it.StopName, it.LightStemmerName},
+	}))
+	must(m.AddCustomAnalyzer(englishAnalyzer, map[string]interface{}{
+		"type": custom.Name, "char_filters": []string{asciifolding.Name}, "tokenizer": wordsTokenizer,
+		"token_filters": []string{lowercase.Name, en.StopName, en.SnowballStemmerName},
 	}))
 
 	mail := bleve.NewDocumentMapping()
@@ -92,12 +121,9 @@ func newMapping() mapping.IndexMapping {
 	mail.AddFieldMappingsAt("folder", kw())
 	mail.AddFieldMappingsAt("message_id", kw())
 	mail.AddFieldMappingsAt("date", date)
-	mail.AddFieldMappingsAt("from", text(textAnalyzer, true))
-	mail.AddFieldMappingsAt("to", text(textAnalyzer, true))
-	mail.AddFieldMappingsAt("cc", text(textAnalyzer, true))
-	mail.AddFieldMappingsAt("subject", text(textAnalyzer, true))
-	mail.AddFieldMappingsAt("body", text(textAnalyzer, true))
-	mail.AddFieldMappingsAt("attachments", text(textAnalyzer, true))
+	for _, f := range []string{"from", "to", "cc", "subject", "body", "attachments"} {
+		bilingual(mail, f)
+	}
 	mail.AddFieldMappingsAt("size", num)
 
 	file := bleve.NewDocumentMapping()
@@ -105,22 +131,84 @@ func newMapping() mapping.IndexMapping {
 	file.AddFieldMappingsAt("sha256", kw())
 	file.AddFieldMappingsAt("source", kw())
 	file.AddFieldMappingsAt("ext", kw())
-	file.AddFieldMappingsAt("path", text(textAnalyzer, true))
-	file.AddFieldMappingsAt("name", text(textAnalyzer, true))
-	file.AddFieldMappingsAt("content", text(textAnalyzer, true))
+	for _, f := range []string{"path", "name", "content"} {
+		bilingual(file, f)
+	}
 	file.AddFieldMappingsAt("size", num)
 	file.AddFieldMappingsAt("mtime", date)
 
 	m.AddDocumentMapping("mail", mail)
 	m.AddDocumentMapping("file", file)
-	m.DefaultAnalyzer = textAnalyzer
+	m.DefaultAnalyzer = italianAnalyzer
 	return m
 }
 
+// bilingual rewrites a parsed query so every text match is asked in both
+// languages: an unfielded match against everything (_all) with each
+// analyzer, a fielded one against the field and its English twin.
+func bilingual(q query.Query) query.Query {
+	either := func(a, b query.Query) query.Query { return bleve.NewDisjunctionQuery(a, b) }
+	switch x := q.(type) {
+	case *query.BooleanQuery:
+		x.Must, x.Should, x.MustNot = bilingualOrNil(x.Must), bilingualOrNil(x.Should), bilingualOrNil(x.MustNot)
+		return x
+	case *query.ConjunctionQuery:
+		for i := range x.Conjuncts {
+			x.Conjuncts[i] = bilingual(x.Conjuncts[i])
+		}
+		return x
+	case *query.DisjunctionQuery:
+		for i := range x.Disjuncts {
+			x.Disjuncts[i] = bilingual(x.Disjuncts[i])
+		}
+		return x
+	case *query.MatchQuery:
+		switch {
+		case x.FieldVal == "":
+			it, en := *x, *x
+			it.Analyzer, en.Analyzer = italianAnalyzer, englishAnalyzer
+			return either(&it, &en)
+		case textFields[x.FieldVal]:
+			en := *x
+			en.FieldVal = x.FieldVal + englishSuffix
+			return either(x, &en)
+		}
+	case *query.MatchPhraseQuery:
+		switch {
+		case x.FieldVal == "":
+			it, en := *x, *x
+			it.Analyzer, en.Analyzer = italianAnalyzer, englishAnalyzer
+			return either(&it, &en)
+		case textFields[x.FieldVal]:
+			en := *x
+			en.FieldVal = x.FieldVal + englishSuffix
+			return either(x, &en)
+		}
+	}
+	return q
+}
+
+func bilingualOrNil(q query.Query) query.Query {
+	if q == nil {
+		return nil
+	}
+	return bilingual(q)
+}
+
 const (
-	wordsTokenizer = "laker_words"
-	textAnalyzer   = "laker_text"
+	wordsTokenizer  = "laker_words"
+	italianAnalyzer = "laker_it"
+	englishAnalyzer = "laker_en"
+	englishSuffix   = "_en"
+
+	// mappingVersion changes whenever newMapping does: an index built with
+	// another mapping must be rebuilt (laker reindex).
+	mappingVersion = "2"
+	mappingKey     = "laker_mapping"
 )
+
+// ErrOutdated means the index was built by an older mapping.
+var ErrOutdated = errors.New("ERR519: the search index was built by an older version of laker: run laker reindex")
 
 func must(err error) {
 	if err != nil {
@@ -150,7 +238,11 @@ func (i *Index) Apply(_ context.Context, docs map[string]any, deletes []string) 
 func (i *Index) Search(ctx context.Context, q domain.Query) (domain.SearchResult, error) {
 	var bq query.Query = bleve.NewMatchAllQuery()
 	if q.Text != "" {
-		bq = bleve.NewQueryStringQuery(q.Text)
+		parsed, err := bleve.NewQueryStringQuery(q.Text).Parse()
+		if err != nil {
+			return domain.SearchResult{}, fmt.Errorf("ERR51A: invalid query: %w", err)
+		}
+		bq = bilingual(parsed)
 	}
 	if q.Kind != "" {
 		kind := bleve.NewTermQuery(q.Kind)

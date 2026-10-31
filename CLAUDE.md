@@ -9,7 +9,7 @@ adding anything.
 
 - **English only in the repository**: code, comments, logs, UI text, docs, config examples, tests
   and commit messages. No Italian anywhere (the only exception is test data that exercises the
-  Italian search analyzer, marked as such).
+  Italian half of the search analyzer, marked as such).
 
 - **Nothing is ever deleted or overwritten in the lake.** `out.Lake` has no `Delete` and writes go
   through `PutIfAbsent`. Deletions at a source become new records (`op=delete`). Do not add code
@@ -70,6 +70,12 @@ A new source implements `out.Source`: read the checkpoint with `rs.GetState`, pu
 with `rs.PutBlob`, append rows with `parquetx.Append(rs, prefix, row)`, index with
 `rs.IndexMail/IndexFile`, stage the new checkpoint with `rs.SetState`, and `rs.Commit` every
 `commitevery` items. Register it in `cmd/laker/builders.go`.
+
+## Search index
+
+Every text field is indexed in Italian and in English (`<field>_en`) and `bilingual()` rewrites each
+query to ask both (`intern/adapters/indexer/bleve`). Whenever `newMapping` changes, raise
+`mappingVersion`: older indexes are then refused until `laker reindex`.
 
 ## Configuration
 
