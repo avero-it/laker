@@ -1,7 +1,6 @@
 package config
 
 import (
-	_ "embed"
 	"fmt"
 	"net/url"
 	"os"
@@ -32,11 +31,6 @@ type AgentCommon struct {
 	Defaults Defaults `yaml:"defaults"`
 }
 
-// AgentExample is the configuration written by `laker-agent config create`.
-//
-//go:embed agent.example.yaml
-var AgentExample []byte
-
 // AgentSearchPaths are tried in order when no file is given.
 var AgentSearchPaths = []string{"/etc/laker-agent/config.yaml", "./laker-agent.yaml"}
 
@@ -63,6 +57,13 @@ func LoadAgent(path string) (*AgentConfig, error) {
 func ParseAgent(b []byte) (*AgentConfig, error) {
 	cfg := &AgentConfig{}
 	return cfg, parseInto(b, cfg)
+}
+
+// ParseAgentRaw decodes without expanding ${VAR}: for rewriting a file
+// without writing its secrets into it.
+func ParseAgentRaw(b []byte) (*AgentConfig, error) {
+	cfg := &AgentConfig{}
+	return cfg, decodeInto(b, cfg)
 }
 
 func ValidateAgent(cfg *AgentConfig, knownTypes map[string]bool) error {

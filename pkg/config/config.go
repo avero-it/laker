@@ -58,6 +58,14 @@ func Parse(b []byte) (*Config, error) {
 // parseInto decodes b strictly into out (a pointer to a struct) and expands
 // ${VAR} in its strings.
 func parseInto(b []byte, out any) error {
+	if err := decodeInto(b, out); err != nil {
+		return err
+	}
+	return expandEnv(reflect.ValueOf(out).Elem())
+}
+
+// decodeInto decodes b strictly into out, leaving ${VAR} as written.
+func decodeInto(b []byte, out any) error {
 	v := viper.New()
 	v.SetConfigType("yaml")
 	if err := v.ReadConfig(bytes.NewReader(b)); err != nil {
@@ -69,7 +77,7 @@ func parseInto(b []byte, out any) error {
 	if err != nil {
 		return fmt.Errorf("ERR703: unable to decode the configuration: %w", err)
 	}
-	return expandEnv(reflect.ValueOf(out).Elem())
+	return nil
 }
 
 var envRE = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
@@ -100,7 +108,13 @@ func expandEnv(v reflect.Value) error {
 			}
 			return reflect.ValueOf(expand(v.String()))
 		case reflect.Struct:
+			// the params of a disabled adapter are left as written: a stub
+			// needs no variable set until it is enabled
+			disabled := v.Type() == reflect.TypeOf(Adapter{}) && !v.FieldByName("Enabled").Bool()
 			for i := 0; i < v.NumField(); i++ {
+				if disabled && v.Type().Field(i).Name == "Params" {
+					continue
+				}
 				walk(v.Field(i))
 			}
 		case reflect.Slice:

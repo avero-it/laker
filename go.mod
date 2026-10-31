@@ -24,6 +24,7 @@ require (
 	github.com/xuri/excelize/v2 v2.11.0
 	go.etcd.io/bbolt v1.5.0
 	golang.org/x/net v0.62.0
+	golang.org/x/term v0.47.0
 	golang.org/x/text v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 )

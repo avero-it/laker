@@ -254,6 +254,9 @@ func loadConfig(path string) (*config.Config, error) {
 	}
 	var errs []error
 	for _, a := range cfg.Adapters {
+		if !a.Enabled {
+			continue // checked once enabled: its variables may not be set yet
+		}
 		if _, err := buildSource(cfg, a, zerolog.Nop()); err != nil {
 			errs = append(errs, fmt.Errorf("ERR013: adapter %s: %w", a.Name, err))
 		}

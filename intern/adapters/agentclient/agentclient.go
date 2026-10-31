@@ -24,6 +24,7 @@ import (
 	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 	"github.com/avero-it/laker/pkg/agentkey"
+	"github.com/avero-it/laker/pkg/redact"
 )
 
 var _ out.Ingest = (*Client)(nil)
@@ -174,6 +175,9 @@ func (c *Client) Commit(ctx context.Context, cm domain.Commit) error {
 	return c.postJSON(ctx, "/agent/v1/commit", cm, nil)
 }
 
+// Finish sends the run record, with any credential its error quotes removed:
+// the secrets of the sources never leave the agent.
 func (c *Client) Finish(ctx context.Context, run domain.Run) error {
+	run.Error = redact.String(run.Error)
 	return c.postJSON(ctx, "/agent/v1/finish", run, nil)
 }

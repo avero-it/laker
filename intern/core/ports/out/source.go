@@ -38,3 +38,9 @@ type RunSink interface {
 
 	Commit(ctx context.Context) error
 }
+
+// Prober is a Source that can check, without reading or sending anything,
+// that it reaches its origin with its configuration.
+type Prober interface {
+	Probe(ctx context.Context) (domain.Probe, error)
+}

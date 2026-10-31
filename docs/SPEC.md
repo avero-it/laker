@@ -416,7 +416,7 @@ laker belongs behind an HTTPS reverse proxy (the agent warns about a plain `http
 ### 11.6 Agent configuration
 
 laker: `common.agents.enabled: true` (needs `common.web`, whose listener it uses). The agent
-(`laker-agent.yaml`, `laker-agent config create` writes an example):
+(`laker-agent.yaml`, see §11.7 to write it):
 
 ```yaml
 schemaversion: 1
@@ -431,9 +431,42 @@ adapters:                           # as in laker
   - { name: home-documents, enabled: true, type: fs, schedule: "0 0 3 * * *", params: { paths: [/home/me/Documents] } }
 ```
 
-Agent commands: `serve`, `id`, `run <adapter> [--dry-run]`, `list`, `config create|validate`, `version`.
+Agent commands: `serve`, `id`, `run <adapter> [--dry-run]`, `list`, `discover`, `config generate|validate`,
+`version`.
 
-### 11.7 Deployment
+### 11.7 Writing the agent configuration
+
+The configuration is the hard part for a single user or a small company, so the agent helps with it:
+
+- **`laker-agent config generate`** writes a complete file: the agent section guessed for this machine
+  (name from the hostname, local time zone, data directory of the OS) and one documented, disabled adapter
+  of every type, generated from the sources themselves (`sources.Stubs`), so it never drifts from the code.
+  `--discover` adds what `discover` finds, disabled.
+- **`laker-agent config validate`** checks the form, then **probes every enabled adapter**: it logs in to
+  the mailboxes and lists the selected folders, reads the directories (bounded count of files and bytes),
+  connects to the databases, opens the read-only snapshot a run would use and lists the selected tables.
+  `--offline` checks the form only; `--json` for scripts. The variables of disabled adapters need not be set.
+- **`laker-agent discover`** looks, read-only and locally, for: IMAP accounts of Thunderbird and Evolution;
+  the document folders (XDG names, so localized ones too); mounted network shares; Postgres (`.pgpass`,
+  `PG*` variables, a server on 5432) and MySQL/MariaDB (`.my.cnf`, a server on 3306); Postgres, MySQL and
+  MariaDB containers through the Docker socket, with the credentials of their environment. On a terminal
+  it proposes each source in turn; **each credential it found is shown masked and saved only if confirmed**,
+  a missing one can be typed (hidden) or left as a `${VARIABLE}`; the adapter is probed at once and
+  enabled if the probe passes. Without a terminal it adds everything disabled and saves no secret.
+  Discovery runs only on demand. No LLM is involved: an assistant may come later, fed only with what
+  discover found, never with secrets.
+- **Secrets** live in `laker-agent.env` next to the configuration (mode 0600, refused if others can read
+  it), read by laker-agent before the configuration; variables already in the environment win.
+
+### 11.8 Credentials never leave the agent
+
+The credentials of an agent's sources live only on the agent's machine (`laker-agent.yaml`,
+`laker-agent.env`, the environment). laker receives only blobs, Parquet files, index documents and run
+records. Run errors are scrubbed of anything that looks like a credential (URL passwords, MySQL DSN
+passwords, `password=` pairs) before they are recorded, logged or sent (`pkg/redact`); failed runs are
+reported to laker too, so its status page shows why. `discover` and `config validate` send nothing.
+
+### 11.9 Deployment
 
 - **Two images** from one `Dockerfile` (targets `laker` and `laker-agent`, distroless, non-root), each with
   its entrypoint and tags; the data machines pull only the agent.
@@ -443,7 +476,7 @@ Agent commands: `serve`, `id`, `run <adapter> [--dry-run]`, `list`, `config crea
   `laker restore` (snapshot) or `laker reindex` + `laker state rebuild`.
 - CI builds laker for Linux and laker-agent also for macOS and Windows, where data often lives.
 
-### 11.8 Known limits
+### 11.10 Known limits
 
 - A commit travels in one request (up to 1 GiB): with very long mails, keep `commitevery` low.
 - The agent's checkpoints live only on the agent: if its `datadir` is lost it reads everything again (blobs

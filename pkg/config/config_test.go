@@ -46,6 +46,7 @@ func TestParamsAreExpanded(t *testing.T) {
 	cfg, err := Parse([]byte(`
 adapters:
   - name: mail
+    enabled: true
     params:
       password: ${IMAP_PASS}
       folders: ["${IMAP_PASS}", INBOX]
@@ -102,8 +103,8 @@ func TestManualScheduleIsValid(t *testing.T) {
 	}
 }
 
-func TestAgentExampleIsValid(t *testing.T) {
-	cfg, err := ParseAgent(AgentExample)
+func TestAgentDefaultsAreValid(t *testing.T) {
+	cfg, err := ParseAgent(RenderAgent(AgentDefaults(), nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,5 +114,18 @@ func TestAgentExampleIsValid(t *testing.T) {
 	cfg.Agent.Server = "ftp://x"
 	if err := ValidateAgent(cfg, types); err == nil || !strings.Contains(err.Error(), "ERR744") {
 		t.Errorf("bad server accepted: %v", err)
+	}
+}
+
+func TestDisabledAdaptersNeedNoVariable(t *testing.T) {
+	cfg, err := Parse([]byte("adapters:\n  - name: off\n    enabled: false\n    params:\n      password: ${NOT_SET_ANYWHERE}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Adapters[0].Params["password"] != "${NOT_SET_ANYWHERE}" {
+		t.Errorf("disabled params: %v", cfg.Adapters[0].Params)
+	}
+	if _, err := Parse([]byte("adapters:\n  - name: on\n    enabled: true\n    params:\n      password: ${NOT_SET_ANYWHERE}\n")); err == nil {
+		t.Error("an enabled adapter with a missing variable was accepted")
 	}
 }

@@ -3,14 +3,17 @@
 package sources
 
 import (
+	"context"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/rs/zerolog"
 
 	fssource "github.com/avero-it/laker/intern/adapters/sources/fs"
 	"github.com/avero-it/laker/intern/adapters/sources/imap"
 	"github.com/avero-it/laker/intern/adapters/sources/sqldb"
+	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 	"github.com/avero-it/laker/pkg/config"
 	"github.com/avero-it/laker/pkg/extract"
@@ -38,6 +41,29 @@ type Env struct {
 	CommitEvery int
 	TmpDir      string
 	Extractor   *extract.Extractor
+}
+
+// Stubs are one documented adapter of every type, for `config generate`.
+func Stubs() []config.GenAdapter {
+	return []config.GenAdapter{imap.Stub(), fssource.Stub(), sqldb.Stub(sqldb.TypePostgres), sqldb.Stub(sqldb.TypeMySQL)}
+}
+
+// ProbeTimeout bounds one live check.
+const ProbeTimeout = 30 * time.Second
+
+// Probe builds the adapter and checks that it reaches its origin.
+func Probe(ctx context.Context, a config.Adapter, env Env) (domain.Probe, error) {
+	src, err := Build(a, env, zerolog.Nop())
+	if err != nil {
+		return domain.Probe{}, err
+	}
+	p, ok := src.(out.Prober)
+	if !ok {
+		return domain.Probe{Summary: "no live check for this type"}, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, ProbeTimeout)
+	defer cancel()
+	return p.Probe(ctx)
 }
 
 func Build(a config.Adapter, env Env, lg zerolog.Logger) (out.Source, error) {

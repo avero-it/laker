@@ -27,12 +27,17 @@ cmd/laker-agent/      the agent: runs sources near the data, sends them to laker
 intern/core/          runner (source side) + LocalIngest (lake side), scheduler, catalog, rebuild, snapshot, agents
 intern/core/domain/   rows (MailRow, FileRow), index docs, state keys, lake keys
 intern/core/ports/out Lake, Source + RunSink, Ingest, StateStore, Indexer
-intern/adapters/      lake/{s3,fs}, sources/{imap,fs,sqldb} (+ registry), indexer/bleve, state/bbolt,
+intern/adapters/      lake/{s3,fs}, sources/{imap,fs,sqldb} (+ registry, stubs, probes), indexer/bleve, state/bbolt,
+                      discover (local, read-only detection of sources for laker-agent),
                       web (UI + /api), agentapi (laker side of /agent/v1), agentclient (agent side)
 intern/coretest/      a real Runner on temp dirs, for tests
 pkg/                  config (viper, strict; laker and agent), logger (+betterstack), signaler, version,
-                      parquetx, glob, extract, agentkey (Ed25519 identity, request signatures)
+                      parquetx, glob, extract, agentkey (Ed25519 identity, request signatures), redact
 ```
+
+Credentials of an agent's sources never leave the agent: never put a secret into a commit, an
+index document, a run record or a log line (`pkg/redact` scrubs run errors). A new source also
+gets a `Stub()` (for `config generate`) and a `Probe()` (for `config validate`).
 
 laker + laker-agent: see `docs/SPEC.md` §11. An agent runs the same sources with
 `agentclient` as its `out.Ingest`; laker validates every commit (`core.ValidateCommit`: a
@@ -100,6 +105,7 @@ digits, from the package's block:
 | `5xx` | indexer, state, extract adapters |
 | `6xx` | `intern/adapters/agentapi`, `agentclient` |
 | `8xx` | `cmd/laker-agent` |
+| `9xx` | `intern/adapters/discover` |
 | `7xx` | `pkg/*` |
 
 Next free code: `grep -rhoE "ERR3[0-9a-fA-F]{2}" intern/adapters/lake/ | sort -u | tail -1`.

@@ -27,7 +27,7 @@ browse** all of it from one web page — including how things were on any past d
 - **`laker serve`** is the always-on service: it owns the lake, the search index and the web UI,
   and can run sources itself.
 - **`laker-agent`** runs next to the data with the same sources and sends what they read to laker.
-  Credentials stay on the agent, nothing has to reach into your networks. Each agent has an Ed25519
+  Credentials stay on the agent and never reach laker; nothing has to reach into your networks. Each agent has an Ed25519
   identity; laker accepts it only after you approve its ID.
 
 A single machine needs only `laker serve`.
@@ -62,7 +62,9 @@ adapters:
 ```bash
 # on laker: common.agents.enabled: true (behind a TLS reverse proxy)
 # on the machine with the data:
-laker-agent config create           # laker-agent.yaml: server URL and adapters
+laker-agent config generate         # laker-agent.yaml: every adapter type, documented, disabled
+laker-agent discover                # finds mail accounts, folders, databases; asks before saving a secret
+laker-agent config validate         # connects to every enabled adapter
 laker-agent serve                   # prints its ID and waits
 # on laker:
 laker agents approve lkr-xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx   # or the "Agents" page
@@ -88,6 +90,7 @@ derived from the lake and restorable (`laker restore`, or `laker reindex` + `lak
 | `laker views` | DuckDB SQL over the lake |
 | `laker reindex` · `laker state rebuild` · `laker snapshot` · `laker restore` | derived data |
 | `laker-agent serve\|id\|run\|list` | the agent |
+| `laker-agent config generate\|validate` · `laker-agent discover` | write and check its configuration |
 
 While `laker serve` runs, the CLI goes through its API.
 

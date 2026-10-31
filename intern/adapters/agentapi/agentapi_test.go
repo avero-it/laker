@@ -209,3 +209,38 @@ func TestServerChecksWhatAgentsSend(t *testing.T) {
 		t.Error("unindex of another source accepted")
 	}
 }
+
+type failingSource struct{}
+
+func (failingSource) Run(context.Context, out.RunSink) error {
+	return errors.New("cannot connect to postgres://reader:hunter2@db.local/erp")
+}
+
+// The credentials of an agent's sources never reach laker, not even inside
+// an error message.
+func TestRunErrorsAreRedacted(t *testing.T) {
+	srv := newServer(t)
+	ctx := context.Background()
+	ag := newAgent(t, srv.url)
+	ag.client.Hello(ctx, "home", "nas", "test")
+	core.SetAgentStatus(srv.state, ag.key.ID(), domain.AgentApproved)
+
+	run := ag.runner.Run(ctx, core.Adapter{Name: "home-db", Type: "postgres", Source: failingSource{}}, false)
+	if run.Status != domain.RunFailed || strings.Contains(run.Error, "hunter2") {
+		t.Fatalf("local run record: %+v", run)
+	}
+	// the failed run reaches laker, redacted
+	last, _ := core.LastRun(srv.state, "home-db")
+	if last == nil || last.Status != domain.RunFailed {
+		t.Fatalf("failed run not recorded on laker: %+v", last)
+	}
+	// and the client redacts on its own, whatever the run record holds
+	run.Error = "cannot connect to postgres://reader:hunter2@db.local/erp"
+	if err := ag.client.Finish(ctx, run); err != nil {
+		t.Fatal(err)
+	}
+	last, _ = core.LastRun(srv.state, "home-db")
+	if last == nil || strings.Contains(last.Error, "hunter2") || !strings.Contains(last.Error, "reader:***@db.local") {
+		t.Errorf("run record on laker: %+v", last)
+	}
+}

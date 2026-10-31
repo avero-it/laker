@@ -89,31 +89,55 @@ func setupCLI() *cobra.Command {
 		},
 	}
 	configCmd := &cobra.Command{Use: "config", Short: "Configuration management commands"}
-	configCreate := &cobra.Command{
-		Use:  "create",
-		Args: cobra.NoArgs,
+	generate := &cobra.Command{
+		Use:     "generate",
+		Aliases: []string{"create"},
+		Short:   "Write a configuration with one documented, disabled adapter of every type",
+		Args:    cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
+			out, _ := cmd.Flags().GetString("output")
 			force, _ := cmd.Flags().GetBool("force")
-			if _, err := os.Stat("laker-agent.yaml"); err == nil && !force {
-				fatalf("ERR800: laker-agent.yaml exists, use --force to overwrite it")
-			}
-			if err := os.WriteFile("laker-agent.yaml", config.AgentExample, 0o600); err != nil {
-				fatalf("ERR801: %v", err)
-			}
-			fmt.Println("wrote laker-agent.yaml")
+			disc, _ := cmd.Flags().GetBool("discover")
+			commandGenerate(out, force, disc)
 		},
 	}
-	configCreate.Flags().Bool("force", false, "Overwrite an existing laker-agent.yaml")
-	configValidate := &cobra.Command{
-		Use:  "validate",
+	generate.Flags().StringP("output", "o", "laker-agent.yaml", "file to write")
+	generate.Flags().Bool("force", false, "Overwrite an existing file")
+	generate.Flags().Bool("discover", false, "Also add what laker-agent discover finds on this machine (disabled, no secret)")
+	validate := &cobra.Command{
+		Use:   "validate",
+		Short: "Check the configuration, then connect to every enabled adapter",
+		Long: "Check the form of the configuration, then probe every enabled adapter: log in to the mailboxes and list\n" +
+			"their folders, read the directories, connect to the databases and list their tables. Nothing is sent to laker.",
 		Args: cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
-			mustConfig(configPath)
-			fmt.Println("configuration is valid")
+			offline, _ := cmd.Flags().GetBool("offline")
+			asJSON, _ := cmd.Flags().GetBool("json")
+			commandValidate(configPath, offline, asJSON)
 		},
 	}
-	configCmd.AddCommand(configCreate, configValidate)
-	root.AddCommand(serveCmd, idCmd, runCmd, listCmd, versionCmd, configCmd)
+	validate.Flags().Bool("offline", false, "Check the form only, connect to nothing")
+	validate.Flags().Bool("json", false, "Print the result as JSON")
+	configCmd.AddCommand(generate, validate)
+
+	discoverCmd := &cobra.Command{
+		Use:   "discover",
+		Short: "Find mail accounts, folders and databases on this machine and add them as adapters",
+		Long: "Look, read-only and locally, for mail accounts (Thunderbird, Evolution), document folders, network shares,\n" +
+			"Postgres and MySQL databases (also in Docker containers). On a terminal, each one is proposed in turn;\n" +
+			"each credential found is shown masked and saved in laker-agent.env only if you confirm it. Nothing is sent.",
+		Args: cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			asJSON, _ := cmd.Flags().GetBool("json")
+			write, _ := cmd.Flags().GetString("write")
+			interactive, _ := cmd.Flags().GetBool("interactive")
+			commandDiscover(configPath, write, asJSON, interactive)
+		},
+	}
+	discoverCmd.Flags().Bool("json", false, "Print what was found as JSON (secrets never included) and write nothing")
+	discoverCmd.Flags().String("write", "", "configuration file to add the adapters to (default: the current one, or laker-agent.yaml)")
+	discoverCmd.Flags().Bool("interactive", false, "Ask questions on standard input even when it is not a terminal")
+	root.AddCommand(serveCmd, idCmd, runCmd, listCmd, versionCmd, configCmd, discoverCmd)
 	return root
 }
 
@@ -127,12 +151,18 @@ func mustConfig(path string) *config.AgentConfig {
 	if err != nil {
 		fatalf("FTL800: %v", err)
 	}
+	if err := loadEnvFile(envPath(path)); err != nil {
+		fatalf("FTL803: %v", err)
+	}
 	cfg, err := config.LoadAgent(path)
 	if err == nil {
 		err = config.ValidateAgent(cfg, sources.Types)
 	}
 	if err == nil {
 		for _, a := range cfg.Adapters {
+			if !a.Enabled {
+				continue // checked once enabled: its variables may not be set yet
+			}
 			if _, berr := sources.Build(a, sources.Env{CommitEvery: 1}, zerolog.Nop()); berr != nil {
 				err = errors.Join(err, fmt.Errorf("ERR802: adapter %s: %w", a.Name, berr))
 			}
@@ -310,6 +340,16 @@ func commandRun(configPath, name string, dryRun bool) {
 	}
 	ctx, cancel := signaler.Context(context.Background(), lf.For("SIG", color.New(color.FgHiBlack).SprintFunc()))
 	defer cancel()
+	if !dryRun {
+		host, _ := os.Hostname()
+		reply, err := a.client.Hello(ctx, cfg.Agent.Name, host, version.GetVersion())
+		if err != nil {
+			fatalf("ERR821: laker is not reachable: %v", err)
+		}
+		if reply.Status != domain.AgentApproved {
+			fatalf("ERR820: this agent is %s on laker; approve it there with: laker agents approve %s", reply.Status, reply.ID)
+		}
+	}
 	if run := a.runner.Run(ctx, ad, dryRun); run.Status != domain.RunOK {
 		os.Exit(1)
 	}

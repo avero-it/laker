@@ -18,6 +18,7 @@ import (
 	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 	"github.com/avero-it/laker/pkg/parquetx"
+	"github.com/avero-it/laker/pkg/redact"
 )
 
 // Adapter is a configured source ready to run.
@@ -68,12 +69,14 @@ func (r *Runner) Run(ctx context.Context, a Adapter, dryRun bool) domain.Run {
 		run.Duration = run.EndedAt.Sub(run.StartedAt)
 		run.Status = domain.RunOK
 		if err != nil {
+			// errors can quote a DSN: no credential goes into the run
+			// record (sent to laker by an agent) nor into the logs
 			run.Status = domain.RunFailed
-			run.Error = err.Error()
+			run.Error = redact.String(err.Error())
 		}
 		ev, msg := lg.Info(), "INF100: run finished"
 		if err != nil {
-			ev, msg = lg.Error().Err(err), "ERR10D: run failed"
+			ev, msg = lg.Error().Str("error", run.Error), "ERR10D: run failed"
 		}
 		ev.Str("status", string(run.Status)).
 			Int("rows", run.Stats.Rows).Int("files", run.Stats.Files).
@@ -108,15 +111,29 @@ func (r *Runner) Run(ctx context.Context, a Adapter, dryRun bool) domain.Run {
 	if err == nil {
 		err = rs.Commit(ctx)
 	}
-	if err == nil && !dryRun {
+	if dryRun {
+		return finish(err)
+	}
+	if err == nil {
 		run.EndedAt, run.Status = r.now(), domain.RunOK
 		run.Duration = run.EndedAt.Sub(run.StartedAt)
 		rec := []out.StateChange{{Bucket: domain.BucketRuns, Key: a.Name, Value: domain.MustJSON(run)}}
 		if err = state.Apply(rec); err == nil {
 			err = ingest.Finish(ctx, run)
 		}
+		return finish(err)
 	}
-	return finish(err)
+	// a failed run is recorded too (never its checkpoint), so the status
+	// pages show why; best effort: the run has failed already
+	failed := finish(err)
+	rec := []out.StateChange{{Bucket: domain.BucketRuns, Key: a.Name, Value: domain.MustJSON(failed)}}
+	if serr := state.Apply(rec); serr != nil {
+		lg.Warn().Msgf("WRN102: cannot record the failed run: %v", serr)
+	}
+	if ferr := ingest.Finish(context.WithoutCancel(ctx), failed); ferr != nil {
+		lg.Warn().Str("error", redact.String(ferr.Error())).Msg("WRN103: cannot report the failed run")
+	}
+	return failed
 }
 
 // LastRun is the last recorded run of an adapter, nil if none.
