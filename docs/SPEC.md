@@ -474,7 +474,16 @@ reported to laker too, so its status page shows why. `config discover` and `conf
   `deploy/k8s/laker.yaml` (one-replica StatefulSet with a volume for state and index, Service).
 - One replica of laker: state and index are single-writer files. They are derived: a new node starts with
   `laker restore` (snapshot) or `laker reindex` + `laker state rebuild`.
-- CI builds laker for Linux and laker-agent also for macOS and Windows, where data often lives.
+- CI (`build.yml`) runs the tests and cross-compiles laker for Linux and macOS and laker-agent also for
+  Windows, where data often lives (laker itself needs POSIX file access).
+- **Releases** (`.goreleaser.yaml`, `.github/workflows/release.yml`): a tag `vX.Y.Z` builds static archives,
+  `.deb`/`.rpm`/`.apk` packages (binary, systemd unit, system user and directories, example config; the
+  service is never started automatically and data is never removed), the GitHub release, Homebrew
+  formulas with a `service` block (`avero-it/homebrew-tap`) and a Scoop manifest for the agent
+  (`avero-it/scoop-bucket`). The tap and bucket are written with the `TAP_GITHUB_TOKEN` secret; without it
+  that step is skipped. `apt.yml` then rebuilds a GPG-signed apt repository from the `.deb` of every
+  release (`scripts/build-apt-repo.sh`, key in `APT_GPG_PRIVATE_KEY`) and publishes it on GitHub Pages.
+  The version is stamped with `-ldflags -X .../pkg/version.version`.
 
 ### 11.10 Known limits
 

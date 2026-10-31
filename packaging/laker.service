@@ -1,0 +1,14 @@
+[Unit]
+Description=Laker personal data lake
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/laker serve
+EnvironmentFile=-/etc/laker/env
+User=laker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

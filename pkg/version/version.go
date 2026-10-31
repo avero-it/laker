@@ -34,7 +34,14 @@ func GetCommitTimestamp() string {
 	return ""
 }
 
+// version is stamped at release time: -ldflags "-X github.com/avero-it/laker/pkg/version.version=1.2.3".
+// Plain "go build" leaves it empty and the module version from the build info is used.
+var version string
+
 func GetVersion() string {
+	if version != "" {
+		return version
+	}
 	if info, ok := debug.ReadBuildInfo(); ok {
 		return info.Main.Version
 	}

@@ -32,6 +32,45 @@ browse** all of it from one web page — including how things were on any past d
 
 A single machine needs only `laker serve`.
 
+## Install
+
+`laker` runs on Linux and macOS; `laker-agent` also on Windows. Every release has static binaries,
+`.deb`/`.rpm`/`.apk` packages and checksums on the [releases page](https://github.com/avero-it/laker/releases).
+
+**Homebrew** (macOS, Linux):
+
+```sh
+brew install avero-it/tap/laker           # the service
+brew install avero-it/tap/laker-agent     # runs next to the data
+brew services start laker-agent           # after writing its config, see the caveats brew prints
+```
+
+**Scoop** (Windows, agent only):
+
+```sh
+scoop bucket add avero-it https://github.com/avero-it/scoop-bucket
+scoop install laker-agent
+```
+
+**Debian, Ubuntu** (apt repository, updated with every release; amd64 and arm64):
+
+```sh
+sudo curl -fsSL https://avero-it.github.io/laker/laker.gpg -o /usr/share/keyrings/laker.gpg
+echo "deb [signed-by=/usr/share/keyrings/laker.gpg] https://avero-it.github.io/laker stable main" | sudo tee /etc/apt/sources.list.d/laker.list
+sudo apt update && sudo apt install laker laker-agent
+```
+
+The packages create the `laker` / `laker-agent` system users, install the systemd units and an example
+configuration, and do not start anything. Then:
+
+```sh
+sudo cp /usr/share/doc/laker/config.example.yaml /etc/laker/config.yaml   # edit it
+sudo systemctl enable --now laker
+```
+
+Without a package manager: `sudo apt install ./laker_<version>_linux_amd64.deb`,
+`sudo dnf install ./laker_<version>_linux_amd64.rpm`, or `go install github.com/avero-it/laker/cmd/laker@latest`.
+
 ## Quick start
 
 ```bash

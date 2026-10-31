@@ -1,0 +1,186 @@
+# GoReleaser config for laker and laker-agent: static (cgo-free) binaries, archives, checksums,
+# the GitHub release, Homebrew formulas, Scoop manifests and .deb/.rpm/.apk packages.
+# Run by .github/workflows/release.yml. Local dry run: goreleaser release --snapshot --clean --skip=publish
+# laker itself does not build for Windows (it needs POSIX file access); laker-agent does.
+version: 2
+
+project_name: laker
+
+before:
+  hooks:
+    # example configurations shipped inside the packages (always match the binaries' own templates)
+    - sh -c 'mkdir -p packaging/generated && cd packaging/generated && rm -f config.yaml laker-agent.yaml && go run -mod=vendor ../../cmd/laker config create && go run -mod=vendor ../../cmd/laker-agent config generate -o laker-agent.yaml'
+
+builds:
+  - id: laker
+    main: ./cmd/laker
+    binary: laker
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath, -mod=vendor]
+    ldflags:
+      - -s -w -X github.com/avero-it/laker/pkg/version.version={{ .Version }}
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+  - id: laker-agent
+    main: ./cmd/laker-agent
+    binary: laker-agent
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath, -mod=vendor]
+    ldflags:
+      - -s -w -X github.com/avero-it/laker/pkg/version.version={{ .Version }}
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: laker
+    ids: [laker]
+    formats: [tar.gz]
+    name_template: "laker_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      # LICENSE_DIR lets the release workflow take LICENSE from the current config checkout
+      - src: '{{ envOrDefault "LICENSE_DIR" "." }}/LICENSE'
+        dst: LICENSE
+  - id: laker-agent
+    ids: [laker-agent]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "laker-agent_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - src: '{{ envOrDefault "LICENSE_DIR" "." }}/LICENSE'
+        dst: LICENSE
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^Merge "
+
+release:
+  header: |
+    Static binaries (no dependencies) for `laker` (Linux, macOS) and `laker-agent` (Linux, macOS,
+    Windows), amd64 and arm64.
+
+        brew install avero-it/tap/laker laker-agent            # macOS, Linux
+        scoop bucket add avero-it https://github.com/avero-it/scoop-bucket && scoop install laker-agent
+        sudo apt install laker laker-agent                     # see the README for the apt repository
+
+# Package managers. The tap and bucket are written with the TAP_GITHUB_TOKEN secret (a
+# fine-grained PAT, Contents read/write on both repos); without it the uploads are skipped and
+# the release still succeeds.
+brews:
+  - name: laker
+    ids: [laker]
+    repository:
+      owner: avero-it
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/avero-it/laker
+    description: "Personal data lake: mail, files and small databases in open formats, searchable"
+    license: MIT
+    skip_upload: '{{ if index .Env "TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
+    test: |
+      assert_match "Laker", shell_output("#{bin}/laker version")
+    caveats: |
+      Write a configuration, then start the service:
+        mkdir -p #{etc}/laker && cd #{etc}/laker && laker config create
+        brew services start laker
+    service: |
+      run [opt_bin/"laker", "serve", "--config", etc/"laker/config.yaml"]
+      keep_alive true
+      working_dir var/"laker"
+      log_path var/"log/laker.log"
+      error_log_path var/"log/laker.log"
+  - name: laker-agent
+    ids: [laker-agent]
+    repository:
+      owner: avero-it
+      name: homebrew-tap
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/avero-it/laker
+    description: "Runs laker sources next to the data and sends them to laker serve"
+    license: MIT
+    skip_upload: '{{ if index .Env "TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
+    test: |
+      assert_match "laker-agent", shell_output("#{bin}/laker-agent version")
+    caveats: |
+      Write a configuration, then start the service:
+        mkdir -p #{etc}/laker-agent && laker-agent config generate --discover -o #{etc}/laker-agent/config.yaml
+        brew services start laker-agent
+    service: |
+      run [opt_bin/"laker-agent", "serve", "--config", etc/"laker-agent/config.yaml"]
+      keep_alive true
+      working_dir var/"laker-agent"
+      log_path var/"log/laker-agent.log"
+      error_log_path var/"log/laker-agent.log"
+
+scoops:
+  - name: laker-agent
+    ids: [laker-agent]
+    repository:
+      owner: avero-it
+      name: scoop-bucket
+      token: "{{ .Env.TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/avero-it/laker
+    description: "Runs laker sources next to the data and sends them to laker serve"
+    license: MIT
+    skip_upload: '{{ if index .Env "TAP_GITHUB_TOKEN" }}false{{ else }}true{{ end }}'
+
+nfpms:
+  - id: laker
+    package_name: laker
+    ids: [laker]
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    vendor: Simone Baglioni
+    homepage: https://github.com/avero-it/laker
+    maintainer: Simone Baglioni <github@simonebaglioni.com>
+    description: "Personal data lake: mail, files and small databases in open formats, searchable"
+    license: MIT
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    contents:
+      - src: packaging/laker.service
+        dst: /lib/systemd/system/laker.service
+      - src: packaging/generated/config.yaml
+        dst: /usr/share/doc/laker/config.example.yaml
+        file_info:
+          mode: 0644
+      - src: '{{ envOrDefault "LICENSE_DIR" "." }}/LICENSE'
+        dst: /usr/share/licenses/laker/LICENSE
+    scripts:
+      postinstall: packaging/laker.postinstall.sh
+      preremove: packaging/laker.preremove.sh
+  - id: laker-agent
+    package_name: laker-agent
+    ids: [laker-agent]
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    vendor: Simone Baglioni
+    homepage: https://github.com/avero-it/laker
+    maintainer: Simone Baglioni <github@simonebaglioni.com>
+    description: "Runs laker sources next to the data and sends them to laker serve"
+    license: MIT
+    formats: [deb, rpm, apk]
+    bindir: /usr/bin
+    contents:
+      - src: packaging/laker-agent.service
+        dst: /lib/systemd/system/laker-agent.service
+      - src: packaging/generated/laker-agent.yaml
+        dst: /usr/share/doc/laker-agent/config.example.yaml
+        file_info:
+          mode: 0644
+      - src: '{{ envOrDefault "LICENSE_DIR" "." }}/LICENSE'
+        dst: /usr/share/licenses/laker-agent/LICENSE
+    scripts:
+      postinstall: packaging/laker-agent.postinstall.sh
+      preremove: packaging/laker-agent.preremove.sh

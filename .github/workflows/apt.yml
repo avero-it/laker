@@ -1,0 +1,85 @@
+name: apt repository
+
+# Publishes the GitHub Pages site (https://avero-it.github.io/laker): a signed apt repository built
+# from the .deb files of every release. It is a separate workflow because releases are immutable:
+# a problem here must never force a new version. Run it by hand (`gh workflow run apt.yml`) to
+# rebuild at any time.
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write # deploy to GitHub Pages
+  id-token: write # required by deploy-pages
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  apt:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    env:
+      GH_TOKEN: ${{ github.token }}
+      APT_GPG_PRIVATE_KEY: ${{ secrets.APT_GPG_PRIVATE_KEY }}
+    steps:
+      - name: Check the signing key
+        id: gate
+        run: |
+          if [ -z "$APT_GPG_PRIVATE_KEY" ]; then
+            echo "::notice::Secret APT_GPG_PRIVATE_KEY is not set: the apt repository was not updated."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.enabled == 'true'
+
+      - name: Install apt-utils
+        if: steps.gate.outputs.enabled == 'true'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq apt-utils
+
+      - name: Download the .deb of every release
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          mkdir debs
+          for tag in $(gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName --jq '.[].tagName'); do
+            if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -q '\.deb$'; then
+              gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern '*.deb' --dir debs
+            fi
+          done
+          ls debs
+
+      - name: Build the signed repository
+        if: steps.gate.outputs.enabled == 'true'
+        run: scripts/build-apt-repo.sh debs site
+
+      # Install from the freshly built repository, exactly as a user would (signature included).
+      # A broken index fails here, before deploying.
+      - name: Smoke test
+        if: steps.gate.outputs.enabled == 'true'
+        run: |
+          sudo cp site/laker.gpg /usr/share/keyrings/laker.gpg
+          echo "deb [signed-by=/usr/share/keyrings/laker.gpg] file:$PWD/site stable main" | sudo tee /tmp/laker-test.list
+          opts="-o Dir::Etc::sourcelist=/tmp/laker-test.list -o Dir::Etc::sourceparts=-"
+          sudo apt-get $opts update
+          sudo apt-get $opts install -y laker laker-agent
+          laker version
+          laker-agent version
+
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+        if: steps.gate.outputs.enabled == 'true'
