@@ -1,0 +1,18 @@
+{{define "login"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in · Laker</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<form class="login" method="post" action="/login">
+  <h1>Laker</h1>
+  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+  <input type="password" name="token" placeholder="Token" autofocus autocomplete="current-password">
+  <input type="hidden" name="next" value="{{.Next}}">
+  <button type="submit">Log in</button>
+</form>
+</body>
+</html>{{end}}

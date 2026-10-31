@@ -1,0 +1,18 @@
+{{define "content"}}
+<h1>Status</h1>
+{{if .Notice}}<div class="notice">{{.Notice}}</div>{{end}}
+<p class="meta">Lake: {{.Lake}} · Laker {{.Version}}</p>
+<table>
+  <tr><th>Adapter</th><th class="hide-sm">Type</th><th class="hide-sm">Schedule</th><th>Last run</th><th>Next</th><th></th></tr>
+  {{range .Adapters}}
+  <tr>
+    <td>{{.Name}}{{if not .Enabled}} <span class="meta">(disabled)</span>{{end}}</td>
+    <td class="hide-sm">{{.Type}}</td>
+    <td class="hide-sm meta">{{.Schedule}}</td>
+    <td>{{if .Running}}<span class="ok">running…</span>{{else if .Last}}<span class="{{if eq .Status "ok"}}ok{{else}}error{{end}}">{{.Status}}</span> {{.Last}} <span class="meta">{{.Rows}} rows</span>{{if .Error}}<div class="meta error">{{.Error}}</div>{{end}}{{else}}<span class="meta">never</span>{{end}}</td>
+    <td class="meta">{{if .Agent}}agent {{.Agent}}{{else}}{{.Next}}{{end}}</td>
+    <td>{{if .CanRun}}<form method="post" action="/run/{{.Name}}"><button type="submit" {{if .Running}}disabled{{end}}>Run now</button></form>{{end}}</td>
+  </tr>
+  {{end}}
+</table>
+{{end}}

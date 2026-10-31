@@ -1,0 +1,8 @@
+{{define "content"}}
+<h1>{{.Name}}</h1>
+<p class="meta">{{.Source}}:{{.Path}}</p>
+<table>
+  <tr><th>Seen</th><th>Event</th><th class="num">Size</th><th></th></tr>
+  {{range .Versions}}<tr><td>{{.When}}</td><td>{{.Op}}</td><td class="num">{{.Size}}</td><td>{{if .SHA}}<a href="/blob/{{.SHA}}/{{$.Name}}">download</a>{{end}}</td></tr>{{end}}
+</table>
+{{end}}

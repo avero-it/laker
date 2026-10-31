@@ -1,0 +1,31 @@
+{{define "content"}}
+<form class="search" method="get" action="/">
+  <input type="search" name="q" value="{{.Q}}" placeholder="Search mail and files… (from:smith, ext:pdf, &quot;exact phrase&quot;)" autofocus>
+  <select name="kind">
+    <option value="" {{if eq .Kind ""}}selected{{end}}>All</option>
+    <option value="mail" {{if eq .Kind "mail"}}selected{{end}}>Mail</option>
+    <option value="file" {{if eq .Kind "file"}}selected{{end}}>Files</option>
+  </select>
+  <button type="submit">Search</button>
+</form>
+{{if .Error}}<div class="notice error">{{.Error}}</div>{{end}}
+{{if .Result}}
+<div class="meta">{{if .Q}}{{.Result.Total}} results{{else}}Latest{{end}} · {{.Took}}</div>
+{{range .Hits}}
+<div class="hit">
+  {{if eq .Kind "mail"}}
+    <div class="title"><a href="/mail/{{.SHA}}">{{or .Subject "(no subject)"}}</a></div>
+    <div class="meta">{{.When}} · {{.From}} · {{.Where}}</div>
+  {{else}}
+    <div class="title"><a href="/blob/{{.SHA}}/{{.Name}}?inline=1">{{.Name}}</a></div>
+    <div class="meta">{{.When}} · {{.Size}} · <a href="/files/{{.Source}}?dir={{.Dir}}">{{.Source}}:{{.Dir}}</a></div>
+  {{end}}
+  {{range .Fragments}}<div class="frag">… {{.}}</div>{{end}}
+</div>
+{{end}}
+<div class="pager">
+  {{if .Prev}}<a href="{{.Prev}}">← previous</a>{{end}}
+  {{if .Next}}<a href="{{.Next}}">next →</a>{{end}}
+</div>
+{{end}}
+{{end}}

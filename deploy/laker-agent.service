@@ -1,0 +1,15 @@
+[Unit]
+Description=laker-agent: sends local data to laker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/laker-agent serve
+EnvironmentFile=-/etc/laker-agent/env
+User=laker-agent
+# reading the data needs the right groups, e.g. SupplementaryGroups=users
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

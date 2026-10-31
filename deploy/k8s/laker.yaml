@@ -1,0 +1,50 @@
+# laker on Kubernetes: one replica (the state and the index are single-writer
+# files), a volume for them, the secrets from a Secret, a Service for the
+# ingress that terminates TLS.
+#   kubectl create secret generic laker --from-literal=LAKER_S3_ACCESS_KEY=… \
+#     --from-literal=LAKER_S3_SECRET_KEY=… --from-literal=LAKER_WEB_TOKEN=…
+#   kubectl create configmap laker-config --from-file=config.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: laker
+spec:
+  replicas: 1
+  serviceName: laker
+  selector:
+    matchLabels: { app: laker }
+  template:
+    metadata:
+      labels: { app: laker }
+    spec:
+      securityContext: { runAsNonRoot: true, fsGroup: 65532 }
+      containers:
+        - name: laker
+          image: laker:latest
+          args: ["serve"]
+          ports: [{ containerPort: 8090, name: http }]
+          envFrom: [{ secretRef: { name: laker } }]
+          volumeMounts:
+            - { name: config, mountPath: /etc/laker, readOnly: true }
+            - { name: data, mountPath: /var/lib/laker }
+          readinessProbe:
+            httpGet: { path: /static/style.css, port: http }
+          livenessProbe:
+            httpGet: { path: /static/style.css, port: http }
+            periodSeconds: 30
+      volumes:
+        - name: config
+          configMap: { name: laker-config }
+  volumeClaimTemplates:
+    - metadata: { name: data }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources: { requests: { storage: 10Gi } }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: laker
+spec:
+  selector: { app: laker }
+  ports: [{ port: 8090, targetPort: http, name: http }]

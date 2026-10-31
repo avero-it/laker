@@ -1,0 +1,24 @@
+{{define "content"}}
+<h1>Agents</h1>
+{{if not .Enabled}}<div class="notice">Agents are disabled: set <code>common.agents.enabled: true</code> in the laker configuration.</div>{{end}}
+{{if .Notice}}<div class="notice">{{.Notice}}</div>{{end}}
+<p class="meta">A new agent shows up here as "pending" on its first contact. Approve it only if the ID is the one its <code>laker-agent</code> prints at start.</p>
+<table>
+  <tr><th>Agent</th><th>ID</th><th>Status</th><th class="hide-sm">Last seen</th><th class="hide-sm">Sources</th><th></th></tr>
+  {{range .Agents}}
+  <tr>
+    <td>{{.Name}}<div class="meta">{{.Hostname}} · {{.Version}}</div></td>
+    <td class="meta"><code>{{.ID}}</code></td>
+    <td class="{{if eq .Status "approved"}}ok{{else if eq .Status "revoked"}}error{{end}}">{{.StatusText}}</td>
+    <td class="hide-sm meta">{{.LastSeen}}</td>
+    <td class="hide-sm meta">{{.Sources}}</td>
+    <td>
+      {{if ne .Status "approved"}}<form method="post" action="/agents/{{.ID}}/approve"><button type="submit">Approve</button></form>{{end}}
+      {{if ne .Status "revoked"}}<form method="post" action="/agents/{{.ID}}/revoke"><button class="link" type="submit">Revoke</button></form>{{end}}
+    </td>
+  </tr>
+  {{else}}
+  <tr><td colspan="6" class="meta">No agent has contacted laker yet.</td></tr>
+  {{end}}
+</table>
+{{end}}

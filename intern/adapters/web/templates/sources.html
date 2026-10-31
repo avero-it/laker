@@ -1,0 +1,4 @@
+{{define "content"}}
+<h1>Files</h1>
+{{range .Sources}}<p><a href="/files/{{.}}">{{.}}</a></p>{{else}}<p class="meta">No file source yet.</p>{{end}}
+{{end}}

@@ -1,0 +1,5 @@
+bin/
+lake/
+data/
+config.yaml
+laker-agent.yaml

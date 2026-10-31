@@ -1,0 +1,31 @@
+# laker as an always-on service; the agents run elsewhere and send to it.
+#   LAKER_S3_ACCESS_KEY=… LAKER_S3_SECRET_KEY=… LAKER_WEB_TOKEN=… docker compose up -d
+# Put a TLS reverse proxy (Caddy, Traefik, nginx) in front of port 8090
+# before exposing it: the agents and the browser talk to it.
+services:
+  laker:
+    build: { context: .., target: laker }
+    image: laker
+    command: ["serve"]
+    restart: unless-stopped
+    ports: ["127.0.0.1:8090:8090"]
+    environment:
+      LAKER_S3_ACCESS_KEY: ${LAKER_S3_ACCESS_KEY}
+      LAKER_S3_SECRET_KEY: ${LAKER_S3_SECRET_KEY}
+      LAKER_WEB_TOKEN: ${LAKER_WEB_TOKEN}
+    volumes:
+      - ./config.yaml:/etc/laker/config.yaml:ro   # web.host: 0.0.0.0, agents.enabled: true
+      - laker-data:/var/lib/laker                 # state and index: derived, restorable from the lake
+
+  # an agent on the same host, e.g. for a database reachable only from here
+  # laker-agent:
+  #   build: { context: .., target: laker-agent }
+  #   image: laker-agent
+  #   restart: unless-stopped
+  #   volumes:
+  #     - ./laker-agent.yaml:/etc/laker-agent/config.yaml:ro  # server: http://laker:8090
+  #     - agent-data:/var/lib/laker-agent                    # the agent key: its identity
+
+volumes:
+  laker-data:
+  # agent-data:

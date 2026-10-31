@@ -1,0 +1,29 @@
+{{define "content"}}
+<h1>{{or .Subject "(no subject)"}}</h1>
+<table class="headers">
+  <tr><td>From</td><td>{{.From}}</td></tr>
+  {{if .To}}<tr><td>To</td><td>{{.To}}</td></tr>{{end}}
+  {{if .Cc}}<tr><td>Cc</td><td>{{.Cc}}</td></tr>{{end}}
+  <tr><td>Date</td><td>{{.When}}</td></tr>
+  <tr><td>Found in</td><td>{{.Where}}</td></tr>
+</table>
+<div class="actions">
+  {{if .HasHTML}}
+    {{if .ShowHTML}}<a href="/mail/{{.SHA}}">Text</a>{{else}}<a href="/mail/{{.SHA}}?html=1">HTML version</a>{{end}}
+    {{if and .ShowHTML (not .Images) .Blocked}}<a href="/mail/{{.SHA}}?html=1&amp;images=1">Load {{.Blocked}} remote images</a>{{end}}
+  {{end}}
+  <a href="/mail/{{.SHA}}/eml">Download .eml</a>
+</div>
+{{if .Attachments}}
+<table>
+  <tr><th>Attachment</th><th class="hide-sm">Type</th><th class="num">Size</th></tr>
+  {{range .Attachments}}<tr><td><a href="/mail/{{$.SHA}}/part/{{.Index}}">{{.Name}}</a></td><td class="hide-sm meta">{{.MIME}}</td><td class="num">{{.Size}}</td></tr>{{end}}
+</table>
+{{end}}
+<p></p>
+{{if .ShowHTML}}
+<iframe class="mail" sandbox srcdoc="{{.HTML}}"></iframe>
+{{else}}
+<div class="body">{{.Body}}</div>
+{{end}}
+{{end}}

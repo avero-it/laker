@@ -1,0 +1,16 @@
+{{define "content"}}
+<h1>{{.Source}}</h1>
+<form class="search" method="get" action="/files/{{.Source}}">
+  <input type="hidden" name="dir" value="{{.Dir}}">
+  <label class="meta">As it was on <input type="date" name="at" value="{{.At}}"></label>
+  <button type="submit">Show</button>
+  {{if .At}}<a href="/files/{{.Source}}?dir={{.Dir}}">today</a>{{end}}
+</form>
+{{if .Error}}<div class="notice error">{{.Error}}</div>{{end}}
+<div class="crumbs">{{range .Crumbs}}<a href="/files/{{$.Source}}?dir={{.Dir}}{{$.AtQuery}}">{{.Name}}</a>/{{end}}</div>
+<table>
+  <tr><th>Name</th><th class="num">Size</th><th class="hide-sm">Modified</th><th class="hide-sm"></th></tr>
+  {{range .Dirs}}<tr><td><a href="/files/{{$.Source}}?dir={{.Dir}}{{$.AtQuery}}">{{.Name}}/</a> <span class="meta">({{.Files}} files)</span></td><td class="num">{{.Size}}</td><td class="hide-sm"></td><td class="hide-sm"></td></tr>{{end}}
+  {{range .Files}}<tr><td><a href="/blob/{{.SHA}}/{{.Name}}?inline=1">{{.Name}}</a></td><td class="num">{{.Size}}</td><td class="hide-sm meta">{{.When}}</td><td class="hide-sm"><a href="/files/{{$.Source}}/history?path={{.Path}}">history</a></td></tr>{{end}}
+</table>
+{{end}}

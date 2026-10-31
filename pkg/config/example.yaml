@@ -1,0 +1,85 @@
+# Laker configuration. ${VAR} in any value is read from the environment.
+schemaversion: 1
+
+common:
+  id:
+    name: laker
+  timezone: Europe/Rome
+  # derived data, rebuildable from the lake: local state and search index
+  datadir: /var/lib/laker
+
+  log:
+    verbose: false
+    use: console                 # console | betterstack | stdout-json
+    betterstack:
+      sourcetoken: ""
+      ingestinghost: ""
+
+  lake:
+    use: s3                      # s3 | fs (development)
+    s3:
+      endpoint: https://fsn1.your-objectstorage.com
+      region: fsn1
+      bucket: my-lake
+      accesskey: ${LAKER_S3_ACCESS_KEY}
+      secretkey: ${LAKER_S3_SECRET_KEY}
+      pathstyle: true
+      conditionalput: true       # the bucket refuses to overwrite (If-None-Match: *)
+    fs:
+      path: ./lake
+
+  # copy of the local state and search index to the lake (_state/, _index/)
+  snapshot:
+    schedule: "0 30 4 * * *"     # every day at 04:30, or manual
+
+  # browser interface of laker serve: search, mail, files, status
+  web:
+    enabled: true
+    host: 127.0.0.1              # keep it local; expose it only behind a TLS reverse proxy
+    port: 8090
+    token: ${LAKER_WEB_TOKEN}    # at least 16 characters
+
+  # laker-agent processes may send data (they wait for approval: laker agents)
+  agents:
+    enabled: false
+
+  defaults:
+    timeout: 2h
+    commitevery: 500
+
+# Active adapters: type + params + schedule (6-field cron with seconds,
+# @every 10m, @hourly, or manual). `laker types` lists the known types.
+adapters: []
+#  - name: mail-personal
+#    enabled: true
+#    type: imap
+#    schedule: "@every 10m"
+#    params:
+#      host: imap.gmail.com
+#      port: 993
+#      security: tls            # tls | starttls | none
+#      username: me@gmail.com
+#      password: ${IMAP_GMAIL_PASS}
+#      folders: ["[Gmail]/All Mail"]
+#      exclude: []
+#      since: ""                # YYYY-MM-DD limits the first run
+#      maxsize: 104857600       # bytes; larger messages are recorded, not stored
+#
+#  - name: files-home
+#    enabled: true
+#    type: fs
+#    schedule: "0 0 3 * * *"
+#    params:
+#      paths: [/home/me/Documents]
+#      exclude: ["**/.git/**", "**/node_modules/**", "**/.DS_Store"]
+#      extract: true            # text of PDF, Office, OpenDocument, HTML, text files for the search
+#      extractmaxsize: 52428800 # bytes
+#
+#  - name: db-erp
+#    enabled: true
+#    type: postgres             # or mysql (MySQL, MariaDB)
+#    schedule: "0 */30 * * * *" # history granularity: one version per row per run
+#    params:
+#      dsn: ${ERP_DSN}          # postgres://user:pass@host:5432/db | user:pass@tcp(host:3306)/db
+#      tables: ["public.*"]     # "schema.table" patterns; default: all (MySQL: the DSN database)
+#      exclude: ["public.sessions"]

@@ -1,0 +1,1681 @@
+//  Copyright (c) 2017 Couchbase, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+// 		http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package scorch
+
+import (
+	"bytes"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"io"
+	"log"
+	"math"
+	"os"
+	"path/filepath"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/RoaringBitmap/roaring/v2"
+	"github.com/blevesearch/bleve/v2/util"
+	index "github.com/blevesearch/bleve_index_api"
+	segment "github.com/blevesearch/scorch_segment_api/v2"
+	bolt "go.etcd.io/bbolt"
+)
+
+const persister = "persister"
+
+var (
+	// DefaultPersisterNapTimeMSec is kept to zero as this helps in direct
+	// persistence of segments with the default safe batch option.
+	// If the default safe batch option results in high number of
+	// files on disk, then users may initialise this configuration parameter
+	// with higher values so that the persister will nap a bit within it's
+	// work loop to favour better in-memory merging of segments to result
+	// in fewer segment files on disk. But that may come with an indexing
+	// performance overhead.
+	// Unsafe batch users are advised to override this to higher value
+	// for better performance especially with high data density.
+	DefaultPersisterNapTimeMSec int = 0 // ms
+
+	// DefaultPersisterNapUnderNumFiles helps in controlling the pace of
+	// persister. At times of a slow merger progress with heavy file merging
+	// operations, its better to pace down the persister for letting the merger
+	// to catch up within a range defined by this parameter.
+	// Fewer files on disk (as per the merge plan) would result in keeping the
+	// file handle usage under limit, faster disk merger and a healthier index.
+	// Its been observed that such a loosely sync'ed introducer-persister-merger
+	// trio results in better overall performance.
+	DefaultPersisterNapUnderNumFiles int = 1000
+
+	// MemoryPressurePauseThreshold lets persister to have a better leeway
+	// for prudently performing the memory merge of segments on a memory
+	// pressure situation. Here the config value is an upper threshold
+	// for the number of paused application threads. The default value would
+	// be a very high number to always favour the merging of memory segments.
+	DefaultMemoryPressurePauseThreshold uint64 = math.MaxUint64
+
+	// DefaultMinSegmentsForInMemoryMerge represents the default number of
+	// in-memory zap segments that persistSnapshotMaybeMerge() needs to
+	// see in an IndexSnapshot before it decides to merge and persist
+	// those segments
+	DefaultMinSegmentsForInMemoryMerge int = 2
+
+	// number workers which parallely perform an in-memory merge of the segments
+	// followed by a flush operation.
+	DefaultNumPersisterWorkers int = 1
+
+	// maximum size of data that a single worker is allowed to perform the in-memory
+	// merge operation.
+	DefaultMaxSizeInMemoryMergePerWorker int = 0
+
+	// NumSnapshotsToKeep represents how many recent, old snapshots to
+	// keep around per Scorch instance.  Useful for apps that require
+	// rollback'ability.
+	NumSnapshotsToKeep int = 1
+
+	// RollbackSamplingInterval controls how far back we are looking
+	// in the history to get the rollback points.
+	// If we have to keep N snapshots ( = NumSnapshotsToKeep ), then upon
+	// including the very latest snapshot there should be N snapshots.
+	// If the timestamp of the latest snapshot is T, and the
+	// RollbackSamplingInterval is D, then the very last one would be T - (N - 1) * D
+	// A value of 0 means we will not sample, and will keep the very latest N snapshots.
+	// Example:
+	//  - For N = 3, and the below timing diagram:
+	//  	a     b     c     d
+	//  	|-----|-----|-----| --> time
+	//  	|  D  |  D  |  D  |
+	//  	X     Y     Z     T
+	// - The rollback points would be b, c, and d. a would be too old.
+	RollbackSamplingInterval time.Duration = 0
+
+	// Controls what portion of the earlier rollback points to retain during
+	// a infrequent/sparse mutation scenario
+	RollbackRetentionFactor float64 = 0.5
+)
+
+type persisterOptions struct {
+	// PersisterNapTimeMSec controls the wait/delay injected into
+	// persistence workloop to improve the chances for
+	// a healthier and heavier in-memory merging
+	PersisterNapTimeMSec int
+
+	// PersisterNapTimeMSec > 0, and the number of files is less than
+	// PersisterNapUnderNumFiles, then the persister will sleep
+	// PersisterNapTimeMSec amount of time to improve the chances for
+	// a healthier and heavier in-memory merging
+	PersisterNapUnderNumFiles int
+
+	// MemoryPressurePauseThreshold lets persister to have a better leeway
+	// for prudently performing the memory merge of segments on a memory
+	// pressure situation. Here the config value is an upper threshold
+	// for the number of paused application threads.
+	MemoryPressurePauseThreshold uint64
+
+	// NumPersisterWorkers decides the number of parallel workers that will
+	// perform the in-memory merge of segments followed by a flush operation.
+	NumPersisterWorkers int
+
+	// MaxSizeInMemoryMerge is the maximum size of data that a single persister
+	// worker is allowed to work on
+	MaxSizeInMemoryMergePerWorker int
+}
+
+type notificationChan chan struct{}
+
+func (s *Scorch) persisterLoop() {
+	defer func() {
+		if r := recover(); r != nil {
+			s.fireAsyncError(NewScorchError(
+				persister,
+				fmt.Sprintf("panic: %v, path: %s", r, s.path),
+				ErrAsyncPanic,
+			))
+		}
+
+		s.asyncTasks.Done()
+	}()
+
+	var persistWatchers []*epochWatcher
+	var lastPersistedEpoch, lastMergedEpoch uint64
+	var ew *epochWatcher
+
+	var unpersistedCallbacks []index.BatchCallback
+
+OUTER:
+	for {
+		atomic.AddUint64(&s.stats.TotPersistLoopBeg, 1)
+
+		select {
+		case <-s.closeCh:
+			break OUTER
+		case ew = <-s.persisterNotifier:
+			persistWatchers = append(persistWatchers, ew)
+		default:
+		}
+		if ew != nil && ew.epoch > lastMergedEpoch {
+			lastMergedEpoch = ew.epoch
+		}
+		lastMergedEpoch, persistWatchers = s.pausePersisterForMergerCatchUp(lastPersistedEpoch,
+			lastMergedEpoch, persistWatchers, s.persisterOptions)
+
+		var ourSnapshot *IndexSnapshot
+		var ourPersisted []chan error
+		var ourPersistedCallbacks []index.BatchCallback
+
+		// check to see if there is a new snapshot to persist
+		s.rootLock.Lock()
+		if s.root != nil && s.root.epoch > lastPersistedEpoch {
+			ourSnapshot = s.root
+			ourSnapshot.AddRef()
+			ourPersisted = s.rootPersisted
+			s.rootPersisted = nil
+			ourPersistedCallbacks = s.persistedCallbacks
+			s.persistedCallbacks = nil
+			atomic.StoreUint64(&s.iStats.persistSnapshotSize, uint64(ourSnapshot.Size()))
+			atomic.StoreUint64(&s.iStats.persistEpoch, ourSnapshot.epoch)
+		}
+		s.rootLock.Unlock()
+
+		if ourSnapshot != nil {
+			startTime := time.Now()
+
+			err := s.persistSnapshot(ourSnapshot, s.persisterOptions)
+			for _, ch := range ourPersisted {
+				if err != nil {
+					ch <- err
+				}
+				close(ch)
+			}
+			if err != nil {
+				atomic.StoreUint64(&s.iStats.persistEpoch, 0)
+				if err == segment.ErrClosed {
+					// index has been closed
+					_ = ourSnapshot.DecRef()
+					break OUTER
+				}
+
+				// save this current snapshot's persistedCallbacks, to invoke during
+				// the retry attempt
+				unpersistedCallbacks = append(unpersistedCallbacks, ourPersistedCallbacks...)
+
+				s.fireAsyncError(NewScorchError(
+					persister,
+					fmt.Sprintf("got err persisting snapshot: %v", err),
+					ErrPersist,
+				))
+				_ = ourSnapshot.DecRef()
+				atomic.AddUint64(&s.stats.TotPersistLoopErr, 1)
+				continue OUTER
+			}
+
+			if unpersistedCallbacks != nil {
+				// in the event of this being a retry attempt for persisting a snapshot
+				// that had earlier failed, prepend the persistedCallbacks associated
+				// with earlier segment(s) to the latest persistedCallbacks
+				ourPersistedCallbacks = append(unpersistedCallbacks, ourPersistedCallbacks...)
+				unpersistedCallbacks = nil
+			}
+
+			for i := range ourPersistedCallbacks {
+				ourPersistedCallbacks[i](err)
+			}
+
+			atomic.StoreUint64(&s.stats.LastPersistedEpoch, ourSnapshot.epoch)
+
+			lastPersistedEpoch = ourSnapshot.epoch
+			for _, ew := range persistWatchers {
+				close(ew.notifyCh)
+			}
+
+			persistWatchers = nil
+			_ = ourSnapshot.DecRef()
+
+			changed := false
+			s.rootLock.RLock()
+			if s.root != nil && s.root.epoch != lastPersistedEpoch {
+				changed = true
+			}
+			s.rootLock.RUnlock()
+
+			s.fireEvent(EventKindPersisterProgress, time.Since(startTime))
+
+			if changed {
+				atomic.AddUint64(&s.stats.TotPersistLoopProgress, 1)
+				continue OUTER
+			}
+		}
+
+		// tell the introducer we're waiting for changes
+		w := &epochWatcher{
+			epoch:    lastPersistedEpoch,
+			notifyCh: make(notificationChan, 1),
+		}
+
+		select {
+		case <-s.closeCh:
+			break OUTER
+		case s.introducerNotifier <- w:
+		}
+
+		if ok := s.fireEvent(EventKindPurgerCheck, 0); ok {
+			s.removeOldData() // might as well cleanup while waiting
+		}
+
+		atomic.AddUint64(&s.stats.TotPersistLoopWait, 1)
+
+		select {
+		case <-s.closeCh:
+			break OUTER
+		case <-w.notifyCh:
+			// woken up, next loop should pick up work
+			atomic.AddUint64(&s.stats.TotPersistLoopWaitNotified, 1)
+		case ew = <-s.persisterNotifier:
+			// if the watchers are already caught up then let them wait,
+			// else let them continue to do the catch up
+			persistWatchers = append(persistWatchers, ew)
+		}
+
+		atomic.AddUint64(&s.stats.TotPersistLoopEnd, 1)
+	}
+}
+
+func notifyMergeWatchers(lastPersistedEpoch uint64,
+	persistWatchers []*epochWatcher,
+) []*epochWatcher {
+	var watchersNext []*epochWatcher
+	for _, w := range persistWatchers {
+		if w.epoch < lastPersistedEpoch {
+			close(w.notifyCh)
+		} else {
+			watchersNext = append(watchersNext, w)
+		}
+	}
+	return watchersNext
+}
+
+func (s *Scorch) pausePersisterForMergerCatchUp(lastPersistedEpoch uint64,
+	lastMergedEpoch uint64, persistWatchers []*epochWatcher,
+	po *persisterOptions,
+) (uint64, []*epochWatcher) {
+	// First, let the watchers proceed if they lag behind
+	persistWatchers = notifyMergeWatchers(lastPersistedEpoch, persistWatchers)
+
+	// Check the merger lag by counting the segment files on disk,
+	numFilesOnDisk, _, _ := s.diskFileStats(nil)
+
+	// On finding fewer files on disk, persister takes a short pause
+	// for sufficient in-memory segments to pile up for the next
+	// memory merge cum persist loop.
+	if numFilesOnDisk < uint64(po.PersisterNapUnderNumFiles) &&
+		po.PersisterNapTimeMSec > 0 && s.NumEventsBlocking() == 0 {
+		select {
+		case <-s.closeCh:
+		case <-time.After(time.Millisecond * time.Duration(po.PersisterNapTimeMSec)):
+			atomic.AddUint64(&s.stats.TotPersisterNapPauseCompleted, 1)
+
+		case ew := <-s.persisterNotifier:
+			// unblock the merger in meantime
+			persistWatchers = append(persistWatchers, ew)
+			lastMergedEpoch = ew.epoch
+			persistWatchers = notifyMergeWatchers(lastPersistedEpoch, persistWatchers)
+			atomic.AddUint64(&s.stats.TotPersisterMergerNapBreak, 1)
+		}
+		return lastMergedEpoch, persistWatchers
+	}
+
+	// Finding too many files on disk could be due to two reasons.
+	// 1. Too many older snapshots awaiting the clean up.
+	// 2. The merger could be lagging behind on merging the disk files.
+	if numFilesOnDisk > uint64(po.PersisterNapUnderNumFiles) {
+		if ok := s.fireEvent(EventKindPurgerCheck, 0); ok {
+			s.removeOldData()
+		}
+		numFilesOnDisk, _, _ = s.diskFileStats(nil)
+	}
+
+	// Persister pause until the merger catches up to reduce the segment
+	// file count under the threshold.
+	// But if there is memory pressure, then skip this sleep maneuvers.
+OUTER:
+	for po.PersisterNapUnderNumFiles > 0 &&
+		numFilesOnDisk >= uint64(po.PersisterNapUnderNumFiles) &&
+		lastMergedEpoch < lastPersistedEpoch {
+		atomic.AddUint64(&s.stats.TotPersisterSlowMergerPause, 1)
+
+		select {
+		case <-s.closeCh:
+			break OUTER
+		case ew := <-s.persisterNotifier:
+			persistWatchers = append(persistWatchers, ew)
+			lastMergedEpoch = ew.epoch
+		}
+
+		atomic.AddUint64(&s.stats.TotPersisterSlowMergerResume, 1)
+
+		// let the watchers proceed if they lag behind
+		persistWatchers = notifyMergeWatchers(lastPersistedEpoch, persistWatchers)
+
+		numFilesOnDisk, _, _ = s.diskFileStats(nil)
+	}
+
+	return lastMergedEpoch, persistWatchers
+}
+
+func (s *Scorch) parsePersisterOptions() (*persisterOptions, error) {
+	po := persisterOptions{
+		PersisterNapTimeMSec:          DefaultPersisterNapTimeMSec,
+		PersisterNapUnderNumFiles:     DefaultPersisterNapUnderNumFiles,
+		MemoryPressurePauseThreshold:  DefaultMemoryPressurePauseThreshold,
+		NumPersisterWorkers:           DefaultNumPersisterWorkers,
+		MaxSizeInMemoryMergePerWorker: DefaultMaxSizeInMemoryMergePerWorker,
+	}
+	if v, ok := s.config["scorchPersisterOptions"]; ok {
+		b, err := util.MarshalJSON(v)
+		if err != nil {
+			return &po, err
+		}
+
+		err = util.UnmarshalJSON(b, &po)
+		if err != nil {
+			return &po, err
+		}
+	}
+	if err := validatePersisterOptions(&po); err != nil {
+		return nil, err
+	}
+	return &po, nil
+}
+
+// validatePersisterOptions validates the persister options
+func validatePersisterOptions(options *persisterOptions) error {
+	// P < 1 is an invalid case
+	if options.NumPersisterWorkers <= 0 {
+		return fmt.Errorf("NumPersisterWorkers must be greater than 0")
+	}
+	// P = 1 and M > 0 is a valid case where one worker will serially flush all batches
+	// P = 1 and M = 0 is a special case which preserves the legacy one-shot in-memory merge + flush behaviour
+	// P > 1 and M > 0 is a valid case where multiple workers will flush batches in parallel
+	// P > 1 and M = 0 is an invalid case
+	if options.NumPersisterWorkers > 1 && options.MaxSizeInMemoryMergePerWorker == 0 {
+		return fmt.Errorf("MaxSizeInMemoryMergePerWorker must be greater than 0 when NumPersisterWorkers > 1")
+	}
+	return nil
+}
+
+func (s *Scorch) persistSnapshot(snapshot *IndexSnapshot, po *persisterOptions) error {
+	// Perform in-memory segment merging only when the memory pressure is
+	// below the configured threshold, else the persister performs the
+	// direct persistence of segments.
+	if s.NumEventsBlocking() < po.MemoryPressurePauseThreshold {
+		persisted, err := s.persistSnapshotMaybeMerge(snapshot, po)
+		if err != nil {
+			return err
+		}
+		if persisted {
+			return nil
+		}
+	}
+
+	return s.persistSnapshotDirect(snapshot)
+}
+
+type flushable struct {
+	sbsBatch          []segment.Segment
+	sbsBatchDrops     []*roaring.Bitmap
+	sbsBatchSnapshots []*SegmentSnapshot
+}
+
+func legacyFlushBehaviour(maxSizeInMemoryMergePerWorker, numPersisterWorkers int) bool {
+	// DefaultMaxSizeInMemoryMergePerWorker = 0 is a special value to preserve the legacy
+	// one-shot in-memory merge + flush behaviour.
+	return maxSizeInMemoryMergePerWorker == 0 && numPersisterWorkers == 1
+}
+
+// persistSnapshotMaybeMerge examines the snapshot and might merge and
+// persist the in-memory zap segments if there are enough of them
+func (s *Scorch) persistSnapshotMaybeMerge(snapshot *IndexSnapshot, po *persisterOptions) (
+	bool, error) {
+	// split our segment snapshots into unpersisted and persisted segments
+	var persistedSegments []*SegmentSnapshot
+	var unpersistedSegments []*SegmentSnapshot
+	numSegments := len(snapshot.segment)
+
+	// collect details of the unpersisted segments
+	sbs := make([]segment.Segment, 0, numSegments)
+	sbsDrops := make([]*roaring.Bitmap, 0, numSegments)
+	sbsSizes := make([]int, 0, numSegments)
+	for _, segmentSnapshot := range snapshot.segment {
+		if _, ok := segmentSnapshot.segment.(segment.PersistedSegment); ok {
+			persistedSegments = append(persistedSegments, segmentSnapshot)
+		} else {
+			unpersistedSegments = append(unpersistedSegments, segmentSnapshot)
+			sbs = append(sbs, segmentSnapshot.segment)
+			sbsDrops = append(sbsDrops, segmentSnapshot.deleted)
+			sbsSizes = append(sbsSizes, segmentSnapshot.Size())
+		}
+	}
+	numPersistedSegments := len(persistedSegments)
+	numUnpersistedSegments := len(unpersistedSegments)
+
+	// if we don't have enough segments to persist, then just return
+	if numUnpersistedSegments < DefaultMinSegmentsForInMemoryMerge {
+		return false, nil
+	}
+
+	// create our flushSet, which will be an array of flushable objects,
+	// each of which will be a batch of segments to merge and persist.
+	// We are guaranteed that at least one flushable object will be created,
+	// since we have already ensured that at least one unpersisted segment is present.
+	var flushSet []*flushable
+	if legacyFlushBehaviour(po.MaxSizeInMemoryMergePerWorker, po.NumPersisterWorkers) {
+		val := &flushable{
+			sbsBatch:          slices.Clone(sbs),
+			sbsBatchDrops:     slices.Clone(sbsDrops),
+			sbsBatchSnapshots: slices.Clone(unpersistedSegments),
+		}
+		flushSet = append(flushSet, val)
+	} else {
+		sbsBatch := make([]segment.Segment, 0, numUnpersistedSegments)
+		sbsBatchDrops := make([]*roaring.Bitmap, 0, numUnpersistedSegments)
+		sbsBatchSnapshots := make([]*SegmentSnapshot, 0, numUnpersistedSegments)
+		runningSize := 0
+		for i := 0; i < numUnpersistedSegments; i++ {
+			sbsBatch = append(sbsBatch, sbs[i])
+			sbsBatchDrops = append(sbsBatchDrops, sbsDrops[i])
+			sbsBatchSnapshots = append(sbsBatchSnapshots, unpersistedSegments[i])
+			runningSize += sbsSizes[i]
+			if runningSize >= po.MaxSizeInMemoryMergePerWorker && len(sbsBatch) >= DefaultMinSegmentsForInMemoryMerge {
+				flushSet = append(flushSet, &flushable{
+					sbsBatch:          slices.Clone(sbsBatch),
+					sbsBatchDrops:     slices.Clone(sbsBatchDrops),
+					sbsBatchSnapshots: slices.Clone(sbsBatchSnapshots),
+				})
+				sbsBatch, sbsBatchDrops, sbsBatchSnapshots = sbsBatch[:0], sbsBatchDrops[:0], sbsBatchSnapshots[:0]
+				runningSize = 0
+			}
+		}
+		if len(sbsBatch) > 0 {
+			flushSet = append(flushSet, &flushable{
+				sbsBatch:          slices.Clone(sbsBatch),
+				sbsBatchDrops:     slices.Clone(sbsBatchDrops),
+				sbsBatchSnapshots: slices.Clone(sbsBatchSnapshots),
+			})
+		}
+	}
+
+	// now merge each batch into a new segment, and persist all of them to disk,
+	// and construct a new snapshot with the merged segments
+	newSnapshot, newSegmentIDs, err := s.mergeAndPersistInMemorySegments(flushSet, po)
+	if err != nil {
+		return false, err
+	}
+	if newSnapshot == nil {
+		return false, nil
+	}
+	defer func() {
+		_ = newSnapshot.DecRef()
+	}()
+
+	// construct a snapshot that's logically equivalent to the input
+	// snapshot, but with merged segments replaced by the new segment
+	equiv := &IndexSnapshot{
+		parent:   snapshot.parent,
+		segment:  make([]*SegmentSnapshot, 0, numPersistedSegments+len(newSegmentIDs)),
+		internal: snapshot.internal,
+		epoch:    snapshot.epoch,
+		creator:  "persistSnapshotMaybeMerge",
+	}
+
+	// first add all the segments that were already persisted
+	// and did not participate in the merge
+	for _, segment := range persistedSegments {
+		equiv.segment = append(equiv.segment, segment)
+	}
+
+	// next, add all the segments that were unpersisted and hence
+	// participated in the merge, from the merged snapshot
+	for _, segment := range newSnapshot.segment {
+		if _, ok := newSegmentIDs[segment.id]; ok {
+			equiv.segment = append(equiv.segment, &SegmentSnapshot{
+				id:      segment.id,
+				segment: segment.segment,
+				deleted: nil, // nil since merging handled deletions
+				stats:   segment.stats,
+			})
+		}
+	}
+
+	// finally, persist the equivalent snapshot to disk
+	err = s.persistSnapshotDirect(equiv)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func copyToDirectory(srcPath string, d index.Directory) (int64, error) {
+	if d == nil {
+		return 0, nil
+	}
+
+	dest, err := d.GetWriter(filepath.Join("store", filepath.Base(srcPath)))
+	if err != nil {
+		return 0, fmt.Errorf("GetWriter err: %v", err)
+	}
+
+	// skip
+	if dest == nil {
+		return 0, nil
+	}
+
+	sourceFileStat, err := os.Stat(srcPath)
+	if err != nil {
+		return 0, err
+	}
+
+	if !sourceFileStat.Mode().IsRegular() {
+		return 0, fmt.Errorf("%s is not a regular file", srcPath)
+	}
+
+	source, err := os.Open(srcPath)
+	if err != nil {
+		return 0, err
+	}
+	defer source.Close()
+	defer dest.Close()
+	return io.Copy(dest, source)
+}
+
+func persistToDirectory(seg segment.UnpersistedSegment, d index.Directory,
+	path string,
+) error {
+	if d == nil {
+		return seg.Persist(path)
+	}
+
+	sg, ok := seg.(io.WriterTo)
+	if !ok {
+		return fmt.Errorf("no io.WriterTo segment implementation found")
+	}
+
+	w, err := d.GetWriter(filepath.Join("store", filepath.Base(path)))
+	if err != nil {
+		return err
+	}
+
+	_, err = sg.WriteTo(w)
+	w.Close()
+
+	return err
+}
+
+func prepareBoltSnapshot(snapshot *IndexSnapshot, tx *util.BoltTxImpl, path string, segPlugin SegmentPlugin, d index.Directory) ([]string, map[uint64]string, error) {
+	snapshotsBucket, err := tx.CreateBucketIfNotExists(util.BoltSnapshotsBucket)
+	if err != nil {
+		return nil, nil, err
+	}
+	newSnapshotKey := encodeUvarintAscending(nil, snapshot.epoch)
+	snapshotBucket, err := snapshotsBucket.CreateBucketIfNotExists(newSnapshotKey)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// persist meta values
+	metaBucket, err := snapshotBucket.CreateBucketIfNotExists(util.BoltMetaDataKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	err = metaBucket.Put(util.BoltMetaDataSegmentTypeKey, []byte(segPlugin.Type()), nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	buf := make([]byte, binary.MaxVarintLen32)
+	binary.BigEndian.PutUint32(buf, segPlugin.Version())
+	err = metaBucket.Put(util.BoltMetaDataSegmentVersionKey, buf, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	// always obtain the path from the parent snapshot if available
+	// since that is the primary source of truth for context
+	if snapshot.parent != nil {
+		path = snapshot.parent.path
+	}
+	writer, err := util.NewFileWriter(
+		[]byte(path + string(os.PathSeparator) + "root.bolt"))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// persist the writer ID used for the bolt snapshot
+	err = metaBucket.Put(util.BoltMetaDataFileWriterIDKey, []byte(writer.Id()), writer)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Storing the timestamp at which the current indexSnapshot
+	// was persisted, useful when you want to spread the
+	// numSnapshotsToKeep reasonably better than consecutive
+	// epochs.
+	currTimeStamp := time.Now()
+	timeStampBinary, err := currTimeStamp.MarshalText()
+	if err != nil {
+		return nil, nil, err
+	}
+	err = metaBucket.Put(util.BoltMetaDataTimeStamp, timeStampBinary, writer)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// persist internal values
+	internalBucket, err := snapshotBucket.CreateBucketIfNotExists(util.BoltInternalKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	for k, v := range snapshot.internal {
+		err = internalBucket.Put([]byte(k), v, writer)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	if snapshot.parent != nil {
+		val := make([]byte, 8)
+		bytesWritten := atomic.LoadUint64(&snapshot.parent.stats.TotBytesWrittenAtIndexTime)
+		binary.LittleEndian.PutUint64(val, bytesWritten)
+		err = internalBucket.Put(util.TotBytesWrittenKey, val, writer)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	filenames := make([]string, 0, len(snapshot.segment))
+	newSegmentPaths := make(map[uint64]string, len(snapshot.segment))
+
+	// first ensure that each segment in this snapshot has been persisted
+	for _, segmentSnapshot := range snapshot.segment {
+		snapshotSegmentKey := encodeUvarintAscending(nil, segmentSnapshot.id)
+		snapshotSegmentBucket, err := snapshotBucket.CreateBucketIfNotExists(snapshotSegmentKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		switch seg := segmentSnapshot.segment.(type) {
+		case segment.PersistedSegment:
+			segPath := seg.Path()
+			_, err = copyToDirectory(segPath, d)
+			if err != nil {
+				return nil, nil, fmt.Errorf("segment: %s copy err: %v", segPath, err)
+			}
+			filename := filepath.Base(segPath)
+			err = snapshotSegmentBucket.Put(util.BoltPathKey, []byte(filename), writer)
+			if err != nil {
+				return nil, nil, err
+			}
+			filenames = append(filenames, filename)
+		case segment.UnpersistedSegment:
+			// need to persist this to disk
+			filename := zapFileName(segmentSnapshot.id)
+			path := filepath.Join(path, filename)
+			err := persistToDirectory(seg, d, path)
+			if err != nil {
+				return nil, nil, fmt.Errorf("segment: %s persist err: %v", path, err)
+			}
+			newSegmentPaths[segmentSnapshot.id] = path
+			err = snapshotSegmentBucket.Put(util.BoltPathKey, []byte(filename), nil)
+			if err != nil {
+				return nil, nil, err
+			}
+			filenames = append(filenames, filename)
+		default:
+			return nil, nil, fmt.Errorf("unknown segment type: %T", seg)
+		}
+
+		// store current deleted bits
+		var roaringBuf bytes.Buffer
+		if segmentSnapshot.deleted != nil {
+			_, err = segmentSnapshot.deleted.WriteTo(&roaringBuf)
+			if err != nil {
+				return nil, nil, fmt.Errorf("error persisting roaring bytes: %v", err)
+			}
+			err = snapshotSegmentBucket.Put(util.BoltDeletedKey, roaringBuf.Bytes(), writer)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
+		// store segment stats
+		if segmentSnapshot.stats != nil {
+			statsBytes, err := json.Marshal(segmentSnapshot.stats.Fetch())
+			if err != nil {
+				return nil, nil, err
+			}
+			err = snapshotSegmentBucket.Put(util.BoltStatsKey, statsBytes, writer)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+
+		// store updated field info
+		if segmentSnapshot.updatedFields != nil {
+			updatedFieldsBytes, err := json.Marshal(segmentSnapshot.updatedFields)
+			if err != nil {
+				return nil, nil, err
+			}
+			err = snapshotSegmentBucket.Put(
+				util.BoltUpdatedFieldsKey, updatedFieldsBytes, writer)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	return filenames, newSegmentPaths, nil
+}
+
+func (s *Scorch) persistSnapshotDirect(snapshot *IndexSnapshot) (err error) {
+	// start a write transaction
+	tx, err := s.rootBolt.Begin(true)
+	if err != nil {
+		return err
+	}
+	// defer rollback on error
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback()
+		}
+	}()
+
+	filenames, newSegmentPaths, err := prepareBoltSnapshot(snapshot, tx, s.path, s.segPlugin, nil)
+	if err != nil {
+		return err
+	}
+
+	// we need to swap in a new root only when we've persisted 1 or
+	// more segments -- whereby the new root would have 1-for-1
+	// replacements of in-memory segments with file-based segments
+	//
+	// other cases like updates to internal values only, and/or when
+	// there are only deletions, are already covered and persisted by
+	// the newly populated boltdb snapshotBucket above
+	if len(newSegmentPaths) > 0 {
+		// now try to open all the new snapshots
+		newSegments := make(map[uint64]segment.Segment, len(newSegmentPaths))
+		defer func() {
+			for _, s := range newSegments {
+				if s != nil {
+					// cleanup segments that were opened but not
+					// swapped into the new root
+					_ = s.Close()
+				}
+			}
+		}()
+		for segmentID, path := range newSegmentPaths {
+			newSegments[segmentID], err = s.segPlugin.OpenUsing(path, s.segmentConfig)
+			if err != nil {
+				return fmt.Errorf("error opening new segment at %s, %v", path, err)
+			}
+		}
+
+		persist := &persistIntroduction{
+			persisted: newSegments,
+			applied:   make(notificationChan),
+		}
+
+		select {
+		case <-s.closeCh:
+			return segment.ErrClosed
+		case s.persists <- persist:
+		}
+
+		// blockingly wait until the persist has been applied
+		<-persist.applied
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return err
+	}
+
+	err = s.rootBolt.Sync()
+	if err != nil {
+		return err
+	}
+
+	// allow files to become eligible for removal after commit, such
+	// as file segments from snapshots that came from the merger
+	s.rootLock.Lock()
+	for _, filename := range filenames {
+		delete(s.ineligibleForRemoval, filename)
+	}
+	s.rootLock.Unlock()
+
+	return nil
+}
+
+func zapFileName(epoch uint64) string {
+	return fmt.Sprintf("%012x.zap", epoch)
+}
+
+// bolt snapshot code
+func (s *Scorch) loadFromBolt() error {
+	err := s.rootBolt.View(func(tx *util.BoltTxImpl) error {
+		snapshots := tx.Bucket(util.BoltSnapshotsBucket)
+		if snapshots == nil {
+			return nil
+		}
+		foundRoot := false
+		c := snapshots.Cursor()
+		for k, _ := c.Last(); k != nil; k, _ = c.Prev() {
+			_, snapshotEpoch, err := decodeUvarintAscending(k)
+			if err != nil {
+				log.Printf("unable to parse segment epoch %x, continuing", k)
+				continue
+			}
+			if foundRoot {
+				s.AddEligibleForRemoval(snapshotEpoch)
+				continue
+			}
+			snapshot := snapshots.GetBucket(k)
+			if snapshot == nil {
+				log.Printf("snapshot key, but bucket missing %x, continuing", k)
+				s.AddEligibleForRemoval(snapshotEpoch)
+				continue
+			}
+			indexSnapshot, err := s.loadSnapshot(snapshot)
+			if err != nil {
+				log.Printf("unable to load snapshot, %v, continuing", err)
+				s.AddEligibleForRemoval(snapshotEpoch)
+				continue
+			}
+			indexSnapshot.epoch = snapshotEpoch
+			// set the nextSegmentID
+			s.nextSegmentID, err = s.maxSegmentIDOnDisk()
+			if err != nil {
+				return err
+			}
+			s.nextSegmentID++
+			s.rootLock.Lock()
+			s.nextSnapshotEpoch = snapshotEpoch + 1
+			rootPrev := s.root
+			s.root = indexSnapshot
+			s.rootLock.Unlock()
+
+			if rootPrev != nil {
+				_ = rootPrev.DecRef()
+			}
+
+			foundRoot = true
+		}
+
+		// try init trainer and load the trained data
+		if trainer := initTrainer(s, s.config); trainer != nil {
+			s.trainer = trainer
+			trainerBucket := snapshots.GetBucket(util.BoltTrainerKey)
+			err := s.trainer.loadTrainedData(trainerBucket)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	// we initialize the checkPoints from all the persisted snapshots,
+	// because if we have state to load, the previous process was already
+	// maintaining checkpoints, whatever survives in the bucket now is that state.
+	persistedSnapshots, err := s.rootBoltSnapshotMetaData()
+	if err != nil {
+		return err
+	}
+	s.checkPoints = persistedSnapshots
+	return nil
+}
+
+// LoadSnapshot loads the segment with the specified epoch
+// NOTE: this is currently ONLY intended to be used by the command-line tool
+func (s *Scorch) LoadSnapshot(epoch uint64) (rv *IndexSnapshot, err error) {
+	err = s.rootBolt.View(func(tx *util.BoltTxImpl) error {
+		snapshots := tx.Bucket(util.BoltSnapshotsBucket)
+		if snapshots == nil {
+			return nil
+		}
+		snapshotKey := encodeUvarintAscending(nil, epoch)
+		snapshot := snapshots.GetBucket(snapshotKey)
+		if snapshot == nil {
+			return fmt.Errorf("snapshot with epoch: %v - doesn't exist", epoch)
+		}
+		rv, err = s.loadSnapshot(snapshot)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rv, nil
+}
+
+func (s *Scorch) loadSnapshot(snapshot *util.BoltBucketImpl) (*IndexSnapshot, error) {
+	rv := &IndexSnapshot{
+		parent:   s,
+		internal: make(map[string][]byte),
+		refs:     1,
+		creator:  "loadSnapshot",
+	}
+	// first we look for the meta-data bucket, this will tell us
+	// which segment type/version was used for this snapshot
+	// all operations for this scorch will use this type/version
+	metaBucket := snapshot.GetBucket(util.BoltMetaDataKey)
+	if metaBucket == nil {
+		_ = rv.DecRef()
+		return nil, fmt.Errorf("meta-data bucket missing")
+	}
+	segmentType, err := metaBucket.Get(util.BoltMetaDataSegmentTypeKey, nil)
+	if err != nil {
+		_ = rv.DecRef()
+		return nil, fmt.Errorf("segment type missing: %v", err)
+	}
+	segmentVersionBytes, err := metaBucket.Get(util.BoltMetaDataSegmentVersionKey, nil)
+	if err != nil {
+		_ = rv.DecRef()
+		return nil, fmt.Errorf("segment version missing: %v", err)
+	}
+	segmentVersion := binary.BigEndian.Uint32(segmentVersionBytes)
+	err = s.loadSegmentPlugin(string(segmentType), segmentVersion)
+	if err != nil {
+		_ = rv.DecRef()
+		return nil, fmt.Errorf(
+			"unable to load correct segment wrapper: %v", err)
+	}
+	fileWriterID, err := metaBucket.Get(util.BoltMetaDataFileWriterIDKey, nil)
+	if err != nil {
+		_ = rv.DecRef()
+		return nil, fmt.Errorf("file writer id missing: %v", err)
+	}
+	reader, err := util.NewFileReader(
+		string(fileWriterID), []byte(s.path+string(os.PathSeparator)+"root.bolt"))
+	if err != nil {
+		_ = rv.DecRef()
+		return nil, fmt.Errorf("unable to load correct reader: %v", err)
+	}
+
+	var running uint64
+	c := snapshot.Cursor()
+	for k, _ := c.First(); k != nil; k, _ = c.Next() {
+		if k[0] == util.BoltInternalKey[0] {
+			internalBucket := snapshot.GetBucket(k)
+			if internalBucket == nil {
+				_ = rv.DecRef()
+				return nil, fmt.Errorf("internal bucket missing")
+			}
+			err := internalBucket.ForEach(func(key []byte, val []byte) error {
+				rv.internal[string(key)] = val
+				return nil
+			}, reader)
+			if err != nil {
+				_ = rv.DecRef()
+				return nil, err
+			}
+		} else if k[0] != util.BoltMetaDataKey[0] {
+			segmentBucket := snapshot.GetBucket(k)
+			if segmentBucket == nil {
+				_ = rv.DecRef()
+				return nil, fmt.Errorf("segment key, but bucket missing %x", k)
+			}
+			segmentSnapshot, err := s.loadSegment(segmentBucket, reader)
+			if err != nil {
+				_ = rv.DecRef()
+				return nil, fmt.Errorf("failed to load segment: %v", err)
+			}
+			_, segmentSnapshot.id, err = decodeUvarintAscending(k)
+			if err != nil {
+				_ = rv.DecRef()
+				return nil, fmt.Errorf("failed to decode segment id: %v", err)
+			}
+			rv.segment = append(rv.segment, segmentSnapshot)
+			rv.offsets = append(rv.offsets, running)
+			// Merge all segment level updated field info for use during queries
+			if segmentSnapshot.updatedFields != nil {
+				rv.MergeUpdateFieldsInfo(segmentSnapshot.updatedFields)
+			}
+			running += segmentSnapshot.segment.Count()
+		}
+	}
+	return rv, nil
+}
+
+func (s *Scorch) loadSegment(segmentBucket *util.BoltBucketImpl, reader util.FileReader) (
+	*SegmentSnapshot, error) {
+	pathBytes, err := segmentBucket.Get(util.BoltPathKey, nil)
+	if pathBytes == nil {
+		return nil, fmt.Errorf("segment path missing")
+	}
+	segmentPath := s.path + string(os.PathSeparator) + string(pathBytes)
+	seg, err := s.segPlugin.OpenUsing(segmentPath, s.segmentConfig)
+	if err != nil {
+		return nil, fmt.Errorf("error opening bolt segment: %v", err)
+	}
+
+	rv := &SegmentSnapshot{
+		segment:    seg,
+		cachedDocs: &cachedDocs{cache: nil},
+		cachedMeta: newCachedMeta(),
+	}
+	deletedBytes, err := segmentBucket.Get(util.BoltDeletedKey, reader)
+	if err != nil {
+		_ = seg.Close()
+		return nil, fmt.Errorf("error getting deleted bytes: %v", err)
+	}
+	if deletedBytes != nil {
+		deletedBitmap := roaring.NewBitmap()
+		r := bytes.NewReader(deletedBytes)
+		_, err := deletedBitmap.ReadFrom(r)
+		if err != nil {
+			_ = seg.Close()
+			return nil, fmt.Errorf("error reading deleted bytes: %v", err)
+		}
+		if !deletedBitmap.IsEmpty() {
+			rv.deleted = deletedBitmap
+		}
+	}
+	statBytes, err := segmentBucket.Get(util.BoltStatsKey, reader)
+	if err != nil {
+		_ = seg.Close()
+		return nil, fmt.Errorf("error getting stat bytes: %v", err)
+	}
+	if statBytes != nil {
+		var statsMap map[string]map[string]uint64
+		err := json.Unmarshal(statBytes, &statsMap)
+		if err != nil {
+			_ = seg.Close()
+			return nil, fmt.Errorf("error reading stat bytes: %v", err)
+		}
+		rv.stats = &fieldStats{statMap: statsMap}
+	}
+	updatedFieldBytes, err := segmentBucket.Get(util.BoltUpdatedFieldsKey, reader)
+	if err != nil {
+		_ = seg.Close()
+		return nil, fmt.Errorf("error getting updated field bytes: %v", err)
+	}
+	if updatedFieldBytes != nil {
+		var updatedFields map[string]*index.UpdateFieldInfo
+		err = json.Unmarshal(updatedFieldBytes, &updatedFields)
+		if err != nil {
+			_ = seg.Close()
+			return nil, fmt.Errorf("error reading updated field bytes: %v", err)
+		}
+		rv.updatedFields = updatedFields
+		// Set the value within the segment base for use during merge
+		rv.UpdateFieldsInfo(rv.updatedFields)
+	}
+
+	return rv, nil
+}
+
+// identify all the file callback writer ids that are in use by boltdb
+func (s *Scorch) boltFileWriterIDsInUse() (map[string]struct{}, error) {
+	idMap := make(map[string]struct{})
+	err := s.rootBolt.View(func(tx *util.BoltTxImpl) error {
+		snapshots := tx.Bucket(util.BoltSnapshotsBucket)
+		if snapshots == nil {
+			return nil
+		}
+		c := snapshots.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			snapshot := snapshots.GetBucket(k)
+			if snapshot == nil {
+				continue
+			}
+			metaBucket := snapshot.GetBucket(util.BoltMetaDataKey)
+			if metaBucket == nil {
+				continue
+			}
+			id, err := metaBucket.Get(util.BoltMetaDataFileWriterIDKey, nil)
+			if err != nil {
+				return err
+			}
+			idMap[string(id)] = struct{}{}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return idMap, nil
+}
+
+// remove all content in boltdb associated with the file callback
+// writer ids and process the data using the latest file writer
+func (s *Scorch) removeBoltFileWriterIDs(ids map[string]struct{}) error {
+	filePath := s.path + string(os.PathSeparator) + "root.bolt"
+	writer, err := util.NewFileWriter([]byte(filePath))
+	if err != nil {
+		return err
+	}
+
+	err = s.rootBolt.Update(func(tx *util.BoltTxImpl) error {
+		snapshots := tx.Bucket(util.BoltSnapshotsBucket)
+		if snapshots == nil {
+			return nil
+		}
+		c := snapshots.Cursor()
+		for k, _ := c.First(); k != nil; k, _ = c.Next() {
+			snapshot := snapshots.GetBucket(k)
+			if snapshot == nil {
+				continue
+			}
+			metaBucket := snapshot.GetBucket(util.BoltMetaDataKey)
+			if metaBucket == nil {
+				continue
+			}
+			fileWriterIDBytes, err := metaBucket.Get(util.BoltMetaDataFileWriterIDKey, nil)
+			if err != nil {
+				return err
+			}
+			fileWriterID := string(fileWriterIDBytes)
+			if _, ok := ids[fileWriterID]; ok {
+				reader, err := util.NewFileReader(fileWriterID, []byte(filePath))
+				if err != nil {
+					return fmt.Errorf("unable to load correct reader: %v", err)
+				}
+
+				cc := snapshot.Cursor()
+				for kk, _ := cc.First(); kk != nil; kk, _ = cc.Next() {
+					if kk[0] == util.BoltInternalKey[0] {
+						internalBucket := snapshot.GetBucket(kk)
+						if internalBucket == nil {
+							continue
+						}
+						// process all of the internal values and replace them with new values
+						internalBucketVals := make(map[string][]byte)
+						err := internalBucket.ForEach(func(key []byte, val []byte) error {
+							internalBucketVals[string(key)] = val
+							return nil
+						}, reader)
+						if err != nil {
+							return err
+						}
+						for key, val := range internalBucketVals {
+							err = internalBucket.Put([]byte(key), val, writer)
+							if err != nil {
+								return err
+							}
+						}
+					} else if kk[0] != util.BoltMetaDataKey[0] {
+						segmentBucket := snapshot.GetBucket(kk)
+						if segmentBucket == nil {
+							continue
+						}
+						// process the updated field key
+						updatedFieldBytes, err := segmentBucket.Get(util.BoltUpdatedFieldsKey, reader)
+						if err != nil {
+							return fmt.Errorf("error getting updated field bytes: %v", err)
+						}
+						if updatedFieldBytes != nil {
+							err = segmentBucket.Put(util.BoltUpdatedFieldsKey, updatedFieldBytes, writer)
+							if err != nil {
+								return err
+							}
+						}
+
+						// process the deleted key
+						deletedBytes, err := segmentBucket.Get(util.BoltDeletedKey, reader)
+						if err != nil {
+							return fmt.Errorf("error getting deleted bytes: %v", err)
+						}
+						if deletedBytes != nil {
+							err = segmentBucket.Put(util.BoltDeletedKey, deletedBytes, writer)
+							if err != nil {
+								return err
+							}
+						}
+						// process the stats key
+						statsBytes, err := segmentBucket.Get(util.BoltStatsKey, reader)
+						if err != nil {
+							return fmt.Errorf("error getting stats bytes: %v", err)
+						}
+						if statsBytes != nil {
+							err = segmentBucket.Put(util.BoltStatsKey, statsBytes, writer)
+							if err != nil {
+								return err
+							}
+						}
+					}
+				}
+				err = metaBucket.Put(util.BoltMetaDataFileWriterIDKey,
+					[]byte(writer.Id()), writer)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (s *Scorch) removeOldData() {
+	removed, err := s.removeOldBoltSnapshots()
+	if err != nil {
+		s.fireAsyncError(NewScorchError(
+			persister,
+			fmt.Sprintf("got err removing old bolt snapshots: %v", err),
+			ErrCleanup,
+		))
+	}
+	atomic.AddUint64(&s.stats.TotSnapshotsRemovedFromMetaStore, uint64(removed))
+
+	err = s.removeOldZapFiles()
+	if err != nil {
+		s.fireAsyncError(NewScorchError(
+			persister,
+			fmt.Sprintf("got err removing old zap files: %v", err),
+			ErrCleanup,
+		))
+	}
+}
+
+func getTimeSeriesSnapshots(maxDataPoints int, interval time.Duration,
+	snapshots []*snapshotMetaData) map[uint64]time.Time {
+	if interval == 0 || len(snapshots) == 0 || maxDataPoints <= 0 {
+		return map[uint64]time.Time{}
+	}
+	// the map containing the time series snapshots, i.e the timeseries of snapshots
+	// each of which is separated by rollbackSamplingInterval
+	rv := make(map[uint64]time.Time, maxDataPoints)
+	// the last point in the "time series", i.e. the timeseries of snapshots
+	// each of which is separated by rollbackSamplingInterval
+	ptr := len(snapshots) - 1
+	rv[snapshots[ptr].epoch] = snapshots[ptr].timeStamp
+	numSnapshotsProtected := 1
+	// traverse the list in reverse order, older timestamps to newer ones.
+	for i := ptr - 1; i >= 0 && numSnapshotsProtected < maxDataPoints; i-- {
+		sinceLast := snapshots[i].timeStamp.Sub(snapshots[ptr].timeStamp)
+		if sinceLast >= interval {
+			// capture the snapshot at the interval boundary: the exact match
+			// if there is one, otherwise the older neighbour (i+1), which was
+			// the last snapshot seen before the interval was crossed
+			idx := i
+			if sinceLast > interval {
+				idx = i + 1
+			}
+			if _, ok := rv[snapshots[idx].epoch]; !ok {
+				rv[snapshots[idx].epoch] = snapshots[idx].timeStamp
+				ptr = idx
+				numSnapshotsProtected++
+			}
+		}
+	}
+	return rv
+}
+
+// getProtectedSnapshots aims to fetch the epochs keep based on a timestamp basis.
+// It tries to get NumSnapshotsToKeep snapshots, each of which are separated
+// by a time duration of RollbackSamplingInterval.
+func (s *Scorch) getProtectedSnapshots(liveSnapshots []*snapshotMetaData) map[uint64]time.Time {
+	// keep numSnapshotsToKeep - 1 worth of time series snapshots, because we always
+	// must preserve the very latest snapshot in bolt as well to avoid accidental
+	// deletes of bolt entries and cleanups by the purger code.
+	protectedEpochs := getTimeSeriesSnapshots(s.numSnapshotsToKeep-1,
+		s.rollbackSamplingInterval, liveSnapshots)
+	numProtected := len(protectedEpochs)
+	// always protect the latest snapshot
+	latestSnapshot := liveSnapshots[0]
+	if _, ok := protectedEpochs[latestSnapshot.epoch]; !ok {
+		protectedEpochs[latestSnapshot.epoch] = latestSnapshot.timeStamp
+		numProtected++
+	}
+	// if we still have not protected enough snapshots, then protect the next most recent snapshots
+	for i := 1; i < len(liveSnapshots) && numProtected < s.numSnapshotsToKeep; i++ {
+		if _, ok := protectedEpochs[liveSnapshots[i].epoch]; !ok {
+			protectedEpochs[liveSnapshots[i].epoch] = liveSnapshots[i].timeStamp
+			numProtected++
+		}
+	}
+	return protectedEpochs
+}
+
+func newCheckPoints(snapshots map[uint64]time.Time) []*snapshotMetaData {
+	rv := make([]*snapshotMetaData, 0, len(snapshots))
+
+	keys := make([]uint64, 0, len(snapshots))
+	for k := range snapshots {
+		keys = append(keys, k)
+	}
+
+	sort.SliceStable(keys, func(i, j int) bool {
+		return snapshots[keys[i]].After(snapshots[keys[j]])
+	})
+
+	for _, key := range keys {
+		rv = append(rv, &snapshotMetaData{
+			epoch:     key,
+			timeStamp: snapshots[key],
+		})
+	}
+
+	return rv
+}
+
+func (s *Scorch) removeOldBoltSnapshots() (numRemoved int, err error) {
+	// first get the set of live snapshots
+	liveSnapshots, err := s.getLiveSnapshots()
+	if err != nil {
+		return 0, err
+	}
+
+	// if no live snapshots, then nothing to do
+	if len(liveSnapshots) == 0 {
+		return 0, nil
+	}
+
+	// then get the set of protected snapshots, which are the ones we want to keep
+	protectedSnapshots := s.getProtectedSnapshots(liveSnapshots)
+
+	var epochsToRemove []uint64
+	var newEligible []uint64
+	s.rootLock.Lock()
+	for _, epoch := range s.eligibleForRemoval {
+		if _, ok := protectedSnapshots[epoch]; ok {
+			// protected
+			newEligible = append(newEligible, epoch)
+		} else {
+			epochsToRemove = append(epochsToRemove, epoch)
+		}
+	}
+	s.eligibleForRemoval = newEligible
+	s.rootLock.Unlock()
+	s.checkPoints = newCheckPoints(protectedSnapshots)
+
+	if len(epochsToRemove) == 0 {
+		return 0, nil
+	}
+
+	tx, err := s.rootBolt.Begin(true)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err == nil {
+			err = tx.Commit()
+		} else {
+			_ = tx.Rollback()
+		}
+		if err == nil {
+			err = s.rootBolt.Sync()
+		}
+	}()
+
+	snapshots := tx.Bucket(util.BoltSnapshotsBucket)
+	if snapshots == nil {
+		return 0, nil
+	}
+
+	for _, epochToRemove := range epochsToRemove {
+		k := encodeUvarintAscending(nil, epochToRemove)
+		err = snapshots.DeleteBucket(k)
+		if err == bolt.ErrBucketNotFound {
+			err = nil
+		}
+		if err == nil {
+			numRemoved++
+		}
+	}
+
+	return numRemoved, err
+}
+
+func (s *Scorch) maxSegmentIDOnDisk() (uint64, error) {
+	files, err := os.ReadDir(s.path)
+	if err != nil {
+		return 0, err
+	}
+
+	var rv uint64
+	for _, f := range files {
+		fname := f.Name()
+		if filepath.Ext(fname) == ".zap" {
+			prefix := strings.TrimSuffix(fname, ".zap")
+			id, err2 := strconv.ParseUint(prefix, 16, 64)
+			if err2 != nil {
+				return 0, err2
+			}
+			if id > rv {
+				rv = id
+			}
+		}
+	}
+	return rv, err
+}
+
+// Removes any *.zap files which aren't listed in the rootBolt.
+func (s *Scorch) removeOldZapFiles() error {
+	liveFileNames, err := s.loadZapFileNames()
+	if err != nil {
+		return err
+	}
+
+	files, err := os.ReadDir(s.path)
+	if err != nil {
+		return err
+	}
+
+	s.rootLock.RLock()
+
+	for _, f := range files {
+		fname := f.Name()
+		if filepath.Ext(fname) == ".zap" {
+			if _, exists := liveFileNames[fname]; !exists && !s.ineligibleForRemoval[fname] && (s.copyScheduled[fname] <= 0) {
+				err := os.Remove(s.path + string(os.PathSeparator) + fname)
+				if err != nil {
+					log.Printf("got err removing file: %s, err: %v", fname, err)
+				}
+			}
+		}
+	}
+
+	s.rootLock.RUnlock()
+
+	return nil
+}
+
+func (s *Scorch) getBoundaryCheckPoint(timeStamp time.Time) time.Time {
+	numCheckpoints := float64(len(s.checkPoints))
+	if numCheckpoints == 0 {
+		return timeStamp
+	}
+	checkpointIdx := int(math.Floor(numCheckpoints * s.rollbackRetentionFactor))
+	if checkpointIdx >= len(s.checkPoints) {
+		checkpointIdx = len(s.checkPoints) - 1
+	}
+	boundary := s.checkPoints[checkpointIdx]
+	if boundary.timeStamp.Before(timeStamp) {
+		return boundary.timeStamp
+	}
+	return timeStamp
+}
+
+type snapshotMetaData struct {
+	epoch     uint64
+	timeStamp time.Time
+}
+
+// returns all the snapshots that are currently persisted
+// in the rootBolt, sorted by latest to oldest epoch.
+func (s *Scorch) rootBoltSnapshotMetaData() ([]*snapshotMetaData, error) {
+	var rv []*snapshotMetaData
+	err := s.rootBolt.View(func(tx *util.BoltTxImpl) error {
+		snapshots := tx.Bucket(util.BoltSnapshotsBucket)
+		if snapshots == nil {
+			return nil
+		}
+		sc := snapshots.Cursor()
+		for sk, _ := sc.Last(); sk != nil; sk, _ = sc.Prev() {
+			_, snapshotEpoch, err := decodeUvarintAscending(sk)
+			if err != nil {
+				continue
+			}
+			snapshot := snapshots.GetBucket(sk)
+			if snapshot == nil {
+				continue
+			}
+			metaBucket := snapshot.GetBucket(util.BoltMetaDataKey)
+			if metaBucket == nil {
+				continue
+			}
+			timeStampBytes, err := metaBucket.Get(util.BoltMetaDataTimeStamp, nil)
+			if err != nil {
+				continue
+			}
+			var timeStamp time.Time
+			err = timeStamp.UnmarshalText(timeStampBytes)
+			if err != nil {
+				continue
+			}
+			meta := &snapshotMetaData{
+				epoch:     snapshotEpoch,
+				timeStamp: timeStamp,
+			}
+			rv = append(rv, meta)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return rv, nil
+}
+
+func (s *Scorch) getLiveSnapshots() ([]*snapshotMetaData, error) {
+	// get all the snapshots that are currently persisted
+	meta, err := s.rootBoltSnapshotMetaData()
+	if err != nil {
+		return nil, err
+	}
+	// if none persisted, then nothing to do
+	if len(meta) == 0 {
+		return nil, nil
+	}
+	// check if we have a rollback sampling interval, if not,
+	// then we will just return the latest numSnapshotsToKeep snapshots
+	if s.rollbackSamplingInterval <= 0 {
+		if len(meta) <= s.numSnapshotsToKeep {
+			return meta, nil
+		}
+		return meta[:s.numSnapshotsToKeep], nil
+	}
+	// we consider a snapshot to be live if:
+	// 1. it is the latest snapshot
+	// 2. it is within our expiration duration
+	var liveSnapshots []*snapshotMetaData
+	// always keep the latest snapshot
+	liveSnapshots = append(liveSnapshots, meta[0])
+	extraSnapshots := s.numSnapshotsToKeep - 1
+	if extraSnapshots <= 0 {
+		return liveSnapshots, nil
+	}
+	// if we need extra snapshots, compute an expiration duration
+	// beyond which we will not consider snapshots to be live
+	currTime := time.Now()
+	expirationDuration := time.Duration(extraSnapshots) * s.rollbackSamplingInterval
+	cutoffTime := currTime.Add(-expirationDuration)
+	// if we have previous checkpoints, then we can extend
+	// the cutoff time based on the boundary checkpoint
+	for _, snapshot := range meta[1:] {
+		if snapshot.timeStamp.Before(cutoffTime) {
+			boundary := s.getBoundaryCheckPoint(snapshot.timeStamp)
+			if boundary.Before(snapshot.timeStamp) {
+				cutoffTime = boundary
+			}
+			break
+		}
+	}
+	// add all snapshots that are newer than the cutoff time
+	for _, snapshot := range meta[1:] {
+		if !snapshot.timeStamp.Before(cutoffTime) {
+			liveSnapshots = append(liveSnapshots, snapshot)
+		}
+	}
+	return liveSnapshots, nil
+}
+
+func (s *Scorch) RootBoltSnapshotEpochs() ([]uint64, error) {
+	var rv []uint64
+	err := s.rootBolt.View(func(tx *util.BoltTxImpl) error {
+		snapshots := tx.Bucket(util.BoltSnapshotsBucket)
+		if snapshots == nil {
+			return nil
+		}
+		sc := snapshots.Cursor()
+		for sk, _ := sc.Last(); sk != nil; sk, _ = sc.Prev() {
+			_, snapshotEpoch, err := decodeUvarintAscending(sk)
+			if err != nil {
+				continue
+			}
+			rv = append(rv, snapshotEpoch)
+		}
+		return nil
+	})
+	return rv, err
+}
+
+// Returns the *.zap file names that are listed in the rootBolt.
+func (s *Scorch) loadZapFileNames() (map[string]struct{}, error) {
+	rv := map[string]struct{}{}
+	err := s.rootBolt.View(func(tx *util.BoltTxImpl) error {
+		snapshots := tx.Bucket(util.BoltSnapshotsBucket)
+		if snapshots == nil {
+			return nil
+		}
+		sc := snapshots.Cursor()
+		for sk, _ := sc.First(); sk != nil; sk, _ = sc.Next() {
+			snapshot := snapshots.GetBucket(sk)
+			if snapshot == nil {
+				continue
+			}
+			segc := snapshot.Cursor()
+			for segk, _ := segc.First(); segk != nil; segk, _ = segc.Next() {
+				if segk[0] == util.BoltInternalKey[0] {
+					continue
+				}
+				segmentBucket := snapshot.GetBucket(segk)
+				if segmentBucket == nil {
+					continue
+				}
+				pathBytes, err := segmentBucket.Get(util.BoltPathKey, nil)
+				if err != nil {
+					continue
+				}
+				if pathBytes == nil {
+					continue
+				}
+				pathString := string(pathBytes)
+				rv[string(pathString)] = struct{}{}
+			}
+		}
+		return nil
+	})
+
+	return rv, err
+}
