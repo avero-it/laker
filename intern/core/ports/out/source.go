@@ -28,6 +28,7 @@ type RunSink interface {
 
 	IndexMail(doc domain.MailDoc)
 	IndexFile(doc domain.FileDoc)
+	IndexChat(doc domain.ChatDoc)
 	UnindexFile(id string)
 
 	// State is a key/value space private to the adapter.

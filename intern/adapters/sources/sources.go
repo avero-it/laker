@@ -13,6 +13,7 @@ import (
 	fssource "github.com/avero-it/laker/intern/adapters/sources/fs"
 	"github.com/avero-it/laker/intern/adapters/sources/imap"
 	"github.com/avero-it/laker/intern/adapters/sources/sqldb"
+	"github.com/avero-it/laker/intern/adapters/sources/telegram"
 	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 	"github.com/avero-it/laker/pkg/config"
@@ -25,6 +26,7 @@ var Types = map[string]bool{
 	fssource.Type:      true,
 	sqldb.TypePostgres: true,
 	sqldb.TypeMySQL:    true,
+	telegram.Type:      true,
 }
 
 func Sorted() []string {
@@ -39,13 +41,16 @@ func Sorted() []string {
 // Env is what the sources share in a process.
 type Env struct {
 	CommitEvery int
-	TmpDir      string
-	Extractor   *extract.Extractor
+	// DataDir keeps what a source must remember beyond its state, such as
+	// the Telegram session.
+	DataDir   string
+	TmpDir    string
+	Extractor *extract.Extractor
 }
 
 // Stubs are one documented adapter of every type, for `config generate`.
 func Stubs() []config.GenAdapter {
-	return []config.GenAdapter{imap.Stub(), fssource.Stub(), sqldb.Stub(sqldb.TypePostgres), sqldb.Stub(sqldb.TypeMySQL)}
+	return []config.GenAdapter{imap.Stub(), fssource.Stub(), sqldb.Stub(sqldb.TypePostgres), sqldb.Stub(sqldb.TypeMySQL), telegram.Stub()}
 }
 
 // ProbeTimeout bounds one live check.
@@ -74,6 +79,8 @@ func Build(a config.Adapter, env Env, lg zerolog.Logger) (out.Source, error) {
 		return fssource.New(a.Name, a.Params, env.CommitEvery, env.TmpDir, env.Extractor, lg)
 	case sqldb.TypePostgres, sqldb.TypeMySQL:
 		return sqldb.New(a.Name, a.Type, a.Params, env.CommitEvery, lg)
+	case telegram.Type:
+		return telegram.New(a.Name, a.Params, env.CommitEvery, env.DataDir, env.TmpDir, lg)
 	default:
 		return nil, fmt.Errorf("ERR2F0: unknown adapter type %q", a.Type)
 	}

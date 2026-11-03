@@ -133,6 +133,7 @@ func ValidateCommit(c domain.Commit) error {
 		"files/inventory/source=" + src + "/",
 		"files/text/source=" + src + "/",
 		"db/" + src + "/",
+		"chat/messages/source=" + src + "/",
 	}
 	for _, f := range c.Files {
 		if err := domain.ValidKey(f.Key); err != nil {
@@ -156,6 +157,11 @@ func ValidateCommit(c domain.Commit) error {
 	for _, d := range c.FileDocs {
 		if d.Source != src {
 			return fmt.Errorf("ERR156: document of source %s in a commit of %s", d.Source, src)
+		}
+	}
+	for _, d := range c.ChatDocs {
+		if d.Source != src {
+			return fmt.Errorf("ERR158: document of source %s in a commit of %s", d.Source, src)
 		}
 	}
 	for _, id := range c.Unindex {

@@ -15,6 +15,8 @@ func TestGeneratedConfigIsValid(t *testing.T) {
 	t.Setenv("LAKER_MAIL_PASSWORD", "x")
 	t.Setenv("LAKER_PG_DSN", "postgres://u@db/erp")
 	t.Setenv("LAKER_MYSQL_DSN", "u:p@tcp(db:3306)/blog")
+	t.Setenv("LAKER_TELEGRAM_API_ID", "12345")
+	t.Setenv("LAKER_TELEGRAM_API_HASH", "abc")
 
 	common := config.AgentDefaults()
 	stubs := Stubs()

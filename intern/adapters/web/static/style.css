@@ -41,3 +41,5 @@ iframe.mail { width: 100%; height: 70vh; border: 1px solid var(--line); border-r
 .login { max-width: 360px; margin: 10vh auto; display: flex; flex-direction: column; gap: 10px; }
 .pager { margin-top: 16px; display: flex; gap: 16px; }
 @media (max-width: 600px) { td.hide-sm, th.hide-sm { display: none; } }
+.body.chat { padding: 8px 12px; margin-top: 4px; }
+.hit.here { background: var(--card); border-left: 3px solid var(--accent); padding-left: 10px; }

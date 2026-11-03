@@ -96,6 +96,7 @@ func humanSize(n int64) string {
 
 type hitView struct {
 	Kind, SHA, Subject, From, Where, When string
+	Chat, ChatLink                        string
 	Name, Size, Source, Dir               string
 	Fragments                             []template.HTML
 }
@@ -103,7 +104,7 @@ type hitView struct {
 func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	kind := r.URL.Query().Get("kind")
-	if kind != "mail" && kind != "file" {
+	if kind != "mail" && kind != "file" && kind != "chat" {
 		kind = ""
 	}
 	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
@@ -120,14 +121,19 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 	for _, h := range res.Hits {
 		f := h.Fields
 		v := hitView{Kind: str(f["kind"]), SHA: str(f["sha256"])}
-		if v.Kind == "mail" {
+		switch v.Kind {
+		case "mail":
 			v.Subject, v.From, v.Where, v.When = str(f["subject"]), str(f["from"]), str(f["folder"]), s.when(f["date"])
-		} else {
+		case "chat":
+			v.Chat, v.From, v.When, v.Source = str(f["chat"]), str(f["from"]), s.when(f["date"]), str(f["source"])
+			v.ChatLink = "/chat/" + url.PathEscape(v.Source) + "/" + url.PathEscape(str(f["chat_id"])) + "?" +
+				url.Values{"around": {fmt.Sprint(num(f["msg_id"]))}, "date": {str(f["date"])}}.Encode()
+		default:
 			p := str(f["path"])
 			v.Name, v.Dir, v.Source = path.Base(p), path.Dir(p), str(f["source"])
 			v.Size, v.When = humanSize(num(f["size"])), s.when(f["mtime"])
 		}
-		for _, field := range []string{"subject", "name", "body", "content"} {
+		for _, field := range []string{"subject", "name", "body", "content", "text"} {
 			for _, frag := range h.Fragments[field] {
 				v.Fragments = append(v.Fragments, markFragment(frag))
 			}

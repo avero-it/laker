@@ -140,6 +140,7 @@ s3://<bucket>/
 ├── mail/messages/account=<a>/month=YYYY-MM/<run>-<seq>.parquet
 ├── files/inventory/source=<s>/dt=YYYY-MM-DD/<run>-<seq>.parquet
 ├── files/text/source=<s>/dt=YYYY-MM-DD/<run>-<seq>.parquet      # text extracted from documents
+├── chat/messages/source=<s>/month=YYYY-MM/<run>-<seq>.parquet    # Telegram messages
 ├── db/<source>/<schema>.<table>/changes/dt=YYYY-MM-DD/<run>-<seq>.parquet
 ├── _runs/<adapter>/<run>-<seq>.json                               # manifest: files written, counts
 ├── _index/<ts>.tar.gz                                             # snapshot of the Bleve index
@@ -185,7 +186,30 @@ s3://<bucket>/
   source. No OCR: a scanned PDF gives no text.
 - **Browsing at a date**: last event per path with `seen_at <= T`, without deletes.
 
-### 5.3 `postgres` / `mysql` (databases)
+### 5.3 `telegram` (private chats and groups)
+
+- The user API (MTProto, `gotd/td`, pure Go): the Bot API cannot read a user's history. Each user registers
+  an `api_id`/`api_hash` at my.telegram.org (none ships with Laker).
+- **Login**: `laker-agent telegram login <adapter>` asks for the code Telegram sends and the two-step
+  password; the session (full access to the account) is saved in `<datadir>/telegram-<adapter>.session`,
+  mode 0600, and never leaves the machine. It shows in Telegram's active sessions as "laker-agent".
+- **Read**: private chats (users, bots, Saved Messages) and groups (basic and super); not broadcast channels,
+  not secret chats (they exist on one device only). Title patterns in `chats`/`exclude`.
+- **First import** of a chat inside an export (takeout) session, as Telegram Desktop's "Export chat
+  history": lower limits, but Telegram asks to confirm it in the app and may delay it about 24 hours for a
+  new session; meanwhile runs end with that message and retry at the next schedule. History is read oldest
+  first, 100 messages a request, committed every `commitevery`: an interrupted import resumes.
+- **Later runs**: the messages after the last one stored, and the last `lookback` (7 days) again to catch
+  edits, which become `update` rows. Deletions are not seen (no always-on connection).
+- `FLOOD_WAIT` answers are waited out (up to 15 minutes, 10 times) and requests are rate-limited.
+- **Media** (photos, videos, voice notes, audio, documents) up to `mediamaxsize` (50 MB) and of the selected
+  `mediatypes` are stored as blobs; the others are recorded with a note, like large mails.
+- **Row** (`chat/messages/source=<s>/month=YYYY-MM/`): `service, chat_id, chat_title, chat_type, msg_id,
+  date, edit_date, op, from_id, from_name, text, reply_to, forwarded_from, media[], seen_at, run_id`. Chat ids
+  follow the Bot API: users > 0, groups < 0.
+- The web UI shows chat hits and the conversation around a message (`/chat/<source>/<chat>`).
+
+### 5.4 `postgres` / `mysql` (databases)
 
 **Snapshot and diff**: no `updated_at` column needed, deletions are seen.
 
@@ -409,7 +433,8 @@ laker belongs behind an HTTPS reverse proxy (the agent warns about a plain `http
   for its own adapters. Another agent with the same name gets `409`, so names must be unique (convention:
   the agent as prefix, `home-mail`, `nas-documents`).
 - A commit may write only under its source's prefixes (`mail/messages/account=<s>/`,
-  `files/inventory/source=<s>/`, `files/text/source=<s>/`, `db/<s>/`), index only documents of its source and
+  `files/inventory/source=<s>/`, `files/text/source=<s>/`, `db/<s>/`, `chat/messages/source=<s>/`), index only
+  documents of its source and
   unindex only its own files. A compromised agent can only add to its own sources: the lake stays
   append-only.
 

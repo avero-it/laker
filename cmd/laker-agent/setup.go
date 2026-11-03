@@ -65,7 +65,7 @@ func commandValidate(configPath string, offline, asJSON bool) {
 		case offline:
 			r.Probe.Summary = "not probed (--offline)"
 		default:
-			p, err := sources.Probe(context.Background(), a, sources.Env{CommitEvery: 1, TmpDir: tmpDir(cfg)})
+			p, err := sources.Probe(context.Background(), a, sources.Env{CommitEvery: 1, DataDir: cfg.Agent.DataDir, TmpDir: tmpDir(cfg)})
 			r.Probe, r.Status = p, "ok"
 			if err != nil {
 				r.Status, r.Error, failed = "failed", err.Error(), true
@@ -244,7 +244,7 @@ func commandDiscover(configPath, write string, asJSON, interactive bool) {
 			}
 		}
 		a := resolve(c.Adapter, values)
-		probe, err := sources.Probe(context.Background(), a, sources.Env{CommitEvery: 1, TmpDir: os.TempDir()})
+		probe, err := sources.Probe(context.Background(), a, sources.Env{CommitEvery: 1, DataDir: common.DataDir, TmpDir: os.TempDir()})
 		if err != nil {
 			fmt.Printf("  check failed: %v\n", err)
 		} else {

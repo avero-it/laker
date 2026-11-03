@@ -51,7 +51,7 @@ func buildLake(cfg *config.Config, lg zerolog.Logger) (out.Lake, error) {
 }
 
 func buildSource(cfg *config.Config, a config.Adapter, lg zerolog.Logger) (out.Source, error) {
-	return sources.Build(a, sources.Env{CommitEvery: cfg.Common.Defaults.CommitEvery, TmpDir: tmpDir(cfg), Extractor: extractor}, lg)
+	return sources.Build(a, sources.Env{CommitEvery: cfg.Common.Defaults.CommitEvery, DataDir: cfg.Common.DataDir, TmpDir: tmpDir(cfg), Extractor: extractor}, lg)
 }
 
 // buildAdapter is buildSource with what the runner needs around it.

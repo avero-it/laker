@@ -74,7 +74,7 @@ func New(d Deps) (*Server, error) {
 	}
 	s := &Server{Deps: d, pages: map[string]*template.Template{}}
 	funcs := template.FuncMap{}
-	for _, page := range []string{"search", "mail", "sources", "files", "history", "status", "agents", "error"} {
+	for _, page := range []string{"search", "mail", "chat", "sources", "files", "history", "status", "agents", "error"} {
 		t, err := template.New("layout").Funcs(funcs).ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("ERR402: template %s: %w", page, err)
@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /mail/{sha}", auth(s.mail))
 	mux.Handle("GET /mail/{sha}/eml", auth(s.eml))
 	mux.Handle("GET /mail/{sha}/part/{n}", auth(s.attachment))
+	mux.Handle("GET /chat/{source}/{chat}", auth(s.chat))
 	mux.Handle("GET /files", auth(s.sources))
 	mux.Handle("GET /files/{source}", auth(s.files))
 	mux.Handle("GET /files/{source}/history", auth(s.history))

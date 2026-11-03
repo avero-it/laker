@@ -1,9 +1,10 @@
 {{define "content"}}
 <form class="search" method="get" action="/">
-  <input type="search" name="q" value="{{.Q}}" placeholder="Search mail and files… (from:smith, ext:pdf, &quot;exact phrase&quot;)" autofocus>
+  <input type="search" name="q" value="{{.Q}}" placeholder="Search mail, chats and files… (from:smith, ext:pdf, &quot;exact phrase&quot;)" autofocus>
   <select name="kind">
     <option value="" {{if eq .Kind ""}}selected{{end}}>All</option>
     <option value="mail" {{if eq .Kind "mail"}}selected{{end}}>Mail</option>
+    <option value="chat" {{if eq .Kind "chat"}}selected{{end}}>Chats</option>
     <option value="file" {{if eq .Kind "file"}}selected{{end}}>Files</option>
   </select>
   <button type="submit">Search</button>
@@ -16,6 +17,9 @@
   {{if eq .Kind "mail"}}
     <div class="title"><a href="/mail/{{.SHA}}">{{or .Subject "(no subject)"}}</a></div>
     <div class="meta">{{.When}} · {{.From}} · {{.Where}}</div>
+  {{else if eq .Kind "chat"}}
+    <div class="title"><a href="{{.ChatLink}}">{{.Chat}}</a></div>
+    <div class="meta">{{.When}} · {{.From}} · {{.Source}}</div>
   {{else}}
     <div class="title"><a href="/blob/{{.SHA}}/{{.Name}}?inline=1">{{.Name}}</a></div>
     <div class="meta">{{.When}} · {{.Size}} · <a href="/files/{{.Source}}?dir={{.Dir}}">{{.Source}}:{{.Dir}}</a></div>

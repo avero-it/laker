@@ -69,6 +69,10 @@ func commandViews(configPath string, withSecrets bool) {
 		fmt.Fprintf(&b, "-- every message, once per folder it is in\nCREATE OR REPLACE VIEW mail AS SELECT * FROM %s;\n", read("mail/messages"))
 		fmt.Fprintf(&b, "-- every message once\nCREATE OR REPLACE VIEW mail_messages AS SELECT * EXCLUDE (folder, uid, uidvalidity, flags) FROM mail WHERE sha256 <> '' QUALIFY row_number() OVER (PARTITION BY sha256 ORDER BY seen_at) = 1;\n\n")
 	}
+	if has("chat/messages") {
+		fmt.Fprintf(&b, "-- every chat message row: originals and edits\nCREATE OR REPLACE VIEW chat_history AS SELECT * FROM %s;\n", read("chat/messages"))
+		fmt.Fprintf(&b, "-- every chat message once, in its last version\nCREATE OR REPLACE VIEW chats AS SELECT * FROM chat_history QUALIFY row_number() OVER (PARTITION BY source, chat_id, msg_id ORDER BY seen_at DESC, run_id DESC) = 1;\n\n")
+	}
 	if has("files/inventory") {
 		fmt.Fprintf(&b, "-- every change seen in the scanned trees\nCREATE OR REPLACE VIEW files_history AS SELECT * FROM %s;\n", read("files/inventory"))
 		fmt.Fprintf(&b, "-- the files present now\nCREATE OR REPLACE VIEW files AS SELECT * FROM files_history QUALIFY row_number() OVER (PARTITION BY source, path ORDER BY seen_at DESC, run_id DESC) = 1 AND op <> 'delete';\n\n")
