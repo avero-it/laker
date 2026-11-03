@@ -74,6 +74,7 @@ func isTimeout(err error) bool {
 var textFields = map[string]bool{
 	"from": true, "to": true, "cc": true, "subject": true, "body": true, "attachments": true,
 	"path": true, "name": true, "content": true,
+	"chat": true, "text": true, "media": true,
 }
 
 func newMapping() mapping.IndexMapping {
@@ -136,6 +137,20 @@ func newMapping() mapping.IndexMapping {
 	}
 	file.AddFieldMappingsAt("size", num)
 	file.AddFieldMappingsAt("mtime", date)
+
+	chat := bleve.NewDocumentMapping()
+	chat.AddFieldMappingsAt("kind", kw())
+	chat.AddFieldMappingsAt("source", kw())
+	chat.AddFieldMappingsAt("chat_id", kw())
+	chat.AddFieldMappingsAt("blobs", kw())
+	chat.AddFieldMappingsAt("msg_key", kw())
+	chat.AddFieldMappingsAt("deleted", bleve.NewBooleanFieldMapping())
+	chat.AddFieldMappingsAt("msg_id", num)
+	chat.AddFieldMappingsAt("date", date)
+	for _, f := range []string{"chat", "from", "text", "media"} {
+		bilingual(chat, f)
+	}
+	m.AddDocumentMapping("chat", chat)
 
 	m.AddDocumentMapping("mail", mail)
 	m.AddDocumentMapping("file", file)
@@ -203,7 +218,7 @@ const (
 
 	// mappingVersion changes whenever newMapping does: an index built with
 	// another mapping must be rebuilt (laker reindex).
-	mappingVersion = "2"
+	mappingVersion = "4"
 	mappingKey     = "laker_mapping"
 )
 
@@ -261,8 +276,11 @@ func (i *Index) Search(ctx context.Context, q domain.Query) (domain.SearchResult
 	} else {
 		req.Highlight = bleve.NewHighlight()
 	}
-	req.Highlight.Fields = []string{"subject", "body", "path", "name", "content"}
-	if q.Text == "" {
+	req.Highlight.Fields = []string{"subject", "body", "path", "name", "content", "text"}
+	switch {
+	case len(q.Sort) > 0:
+		req.SortBy(q.Sort)
+	case q.Text == "":
 		req.SortBy([]string{"-date", "-mtime"})
 	}
 

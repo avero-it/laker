@@ -27,7 +27,7 @@ cmd/laker-agent/      the agent: runs sources near the data, sends them to laker
 intern/core/          runner (source side) + LocalIngest (lake side), scheduler, catalog, rebuild, snapshot, agents
 intern/core/domain/   rows (MailRow, FileRow), index docs, state keys, lake keys
 intern/core/ports/out Lake, Source + RunSink, Ingest, StateStore, Indexer
-intern/adapters/      lake/{s3,fs}, sources/{imap,fs,sqldb} (+ registry, stubs, probes), indexer/bleve, state/bbolt,
+intern/adapters/      lake/{s3,fs}, sources/{imap,fs,sqldb,telegram,whatsapp,chatmedia} (+ registry, stubs, probes), indexer/bleve, state/bbolt,
                       discover (local, read-only detection of sources for laker-agent),
                       web (UI + /api), agentapi (laker side of /agent/v1), agentclient (agent side)
 intern/coretest/      a real Runner on temp dirs, for tests

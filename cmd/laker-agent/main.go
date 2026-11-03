@@ -137,7 +137,7 @@ func setupCLI() *cobra.Command {
 	discoverCmd.Flags().String("write", "", "configuration file to add the adapters to (default: the current one, or laker-agent.yaml)")
 	discoverCmd.Flags().Bool("interactive", false, "Ask questions on standard input even when it is not a terminal")
 	configCmd.AddCommand(generate, discoverCmd, validate)
-	root.AddCommand(serveCmd, idCmd, runCmd, listCmd, versionCmd, configCmd)
+	root.AddCommand(serveCmd, idCmd, runCmd, listCmd, versionCmd, configCmd, telegramCmd(&configPath), whatsappCmd(&configPath))
 	return root
 }
 
@@ -163,7 +163,7 @@ func mustConfig(path string) *config.AgentConfig {
 			if !a.Enabled {
 				continue // checked once enabled: its variables may not be set yet
 			}
-			if _, berr := sources.Build(a, sources.Env{CommitEvery: 1}, zerolog.Nop()); berr != nil {
+			if _, berr := sources.Build(a, sources.Env{CommitEvery: 1, DataDir: cfg.Agent.DataDir}, zerolog.Nop()); berr != nil {
 				err = errors.Join(err, fmt.Errorf("ERR802: adapter %s: %w", a.Name, berr))
 			}
 		}
@@ -240,6 +240,7 @@ func newAgent(cfg *config.AgentConfig, lf *logger.Factory, wait time.Duration) *
 
 func (a *agent) adapter(c config.Adapter) (core.Adapter, error) {
 	src, err := sources.Build(c, sources.Env{
+		DataDir:     a.cfg.Agent.DataDir,
 		CommitEvery: a.cfg.Agent.Defaults.CommitEvery, TmpDir: tmpDir(a.cfg), Extractor: a.extractor,
 	}, a.lf.For("SRC:"+c.Name, color.New(color.FgCyan).SprintFunc()))
 	if err != nil {

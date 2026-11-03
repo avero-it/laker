@@ -68,7 +68,7 @@ func (l *LocalIngest) Commit(ctx context.Context, c domain.Commit) error {
 			return fmt.Errorf("ERR107: cannot write the manifest %s: %w", name, err)
 		}
 	}
-	if len(c.Mail) == 0 && len(c.FileDocs) == 0 && len(c.Unindex) == 0 {
+	if len(c.Mail) == 0 && len(c.FileDocs) == 0 && len(c.ChatDocs) == 0 && len(c.Unindex) == 0 {
 		return nil
 	}
 
@@ -107,6 +107,10 @@ func (l *LocalIngest) Commit(ctx context.Context, c domain.Commit) error {
 	for _, d := range c.FileDocs {
 		d.Kind = "file"
 		docs[domain.FileDocID(d.Source, d.Path)] = d
+	}
+	for _, d := range c.ChatDocs {
+		d.Kind = "chat"
+		docs[d.ID()] = d
 	}
 	for _, id := range c.Unindex {
 		delete(docs, id)

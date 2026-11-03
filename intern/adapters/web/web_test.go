@@ -46,6 +46,16 @@ func (fakeSource) Run(ctx context.Context, rs out.RunSink) error {
 	parquetx.Append(rs, domain.MailPrefix("acc", date), row)
 	rs.IndexMail(domain.NewMailDoc(row, domain.MailLocations{Accounts: []string{"acc"}, Folders: []string{"INBOX"}}))
 
+	for i, text := range []string{"are you coming to dinner?", "yes, with the photos", "see you"} {
+		cr := domain.ChatRow{Source: "tg", Service: "telegram", ChatID: -20, ChatTitle: "Family", ChatType: "group",
+			MsgID: int64(i + 1), Date: date.Add(time.Duration(i) * time.Minute), FromName: "Dad", Text: text, Op: "insert", SeenAt: date, RunID: rs.RunID()}
+		if i == 1 {
+			cr.Media = []domain.ChatMedia{{Kind: "photo", Name: "p.jpg", SHA256: sum("text")}}
+		}
+		parquetx.Append(rs, domain.ChatPrefix("tg", date), cr)
+		rs.IndexChat(domain.NewChatDoc(cr))
+	}
+
 	for _, f := range []struct{ path, content string }{{"/home/me/doc/page.html", "<script>alert(1)</script>"}, {"/home/me/doc/a.txt", "text"}} {
 		s := sum(f.content)
 		rs.PutBlob(ctx, s, int64(len(f.content)), strings.NewReader(f.content))
@@ -258,5 +268,24 @@ func TestFilesAndBlobs(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	if len(runs.triggered) != 1 || !strings.Contains(string(b), "Started: files") {
 		t.Errorf("run: %v\n%s", runs.triggered, b)
+	}
+}
+
+func TestChat(t *testing.T) {
+	ts, _ := setup(t)
+	c := client(t, ts)
+	_, page, _ := body(t, c, ts.URL+"/?q=dinner&kind=chat")
+	if !strings.Contains(page, "Family") || !strings.Contains(page, "/chat/tg/-20?") {
+		t.Fatalf("chat hit:\n%s", page)
+	}
+	i := strings.Index(page, "/chat/tg/-20?")
+	link := strings.ReplaceAll(page[i:i+strings.Index(page[i:], `"`)], "&amp;", "&")
+	code, conv, _ := body(t, c, ts.URL+link)
+	if code != 200 || !strings.Contains(conv, "are you coming to dinner?") || !strings.Contains(conv, "see you") ||
+		!strings.Contains(conv, `class="hit here"`) || !strings.Contains(conv, "/blob/"+sum("text")+"/p.jpg") {
+		t.Errorf("conversation (%d):\n%s", code, conv)
+	}
+	if code, _, _ := body(t, c, ts.URL+"/chat/tg/bad%20id%3F"); code != 404 {
+		t.Errorf("bad chat id: %d", code)
 	}
 }

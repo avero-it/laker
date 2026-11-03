@@ -162,3 +162,9 @@ type errs []error
 
 func (e *errs) add(err error) { *e = append(*e, err) }
 func (e errs) join() error    { return errors.Join(e...) }
+
+// ExpandParams expands ${VAR} in the params of an adapter, also when it is
+// disabled (for instance to log in before enabling it).
+func ExpandParams(a *Adapter) error {
+	return expandEnv(reflect.ValueOf(&a.Params).Elem())
+}

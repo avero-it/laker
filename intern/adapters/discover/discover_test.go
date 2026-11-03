@@ -55,6 +55,8 @@ Method=ssl-on-alternate-port
 	os.MkdirAll(filepath.Join(home, "Docs"), 0o755)
 	os.MkdirAll(filepath.Join(home, "Desk"), 0o755)
 	write(t, filepath.Join(home, ".config", "user-dirs.dirs"), "XDG_DESKTOP_DIR=\"$HOME/Desk\"\nXDG_DOCUMENTS_DIR=\"$HOME/Docs\"\nXDG_MUSIC_DIR=\"$HOME/Music\"\n")
+	os.MkdirAll(filepath.Join(home, ".local", "share", "TelegramDesktop", "tdata"), 0o700)
+	os.MkdirAll(filepath.Join(home, ".var", "app", "com.rtosta.zapzap"), 0o700)
 	mounts := filepath.Join(home, "mounts")
 	write(t, mounts, "/dev/sda1 / ext4 rw 0 0\n//nas/archive /mnt/nas\\040archive cifs rw 0 0\n")
 
@@ -128,6 +130,13 @@ func TestDiscover(t *testing.T) {
 	}
 	if nas := got["home-files-nas-archive"]; param(nas, "paths").([]string)[0] != "/mnt/nas archive" {
 		t.Errorf("share: %+v (all: %v)", nas, names)
+	}
+	if wa := got["home-whatsapp"]; wa.Adapter.Type != "whatsapp" || len(wa.Secrets) != 0 || len(wa.Notes) != 1 {
+		t.Errorf("whatsapp: %+v", wa)
+	}
+	tgc := got["home-telegram"]
+	if tgc.Adapter.Type != "telegram" || len(tgc.Secrets) != 2 || tgc.Secrets[0].Found() {
+		t.Errorf("telegram: %+v (all: %v)", tgc, names)
 	}
 	for _, c := range got {
 		if c.Adapter.Enabled {

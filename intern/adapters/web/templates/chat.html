@@ -1,0 +1,17 @@
+{{define "content"}}
+<h1>{{.Chat}}</h1>
+<p class="meta">{{.Source}} · {{.From}} – {{.To}}</p>
+<div class="pager">
+  <a href="{{.Earlier}}">← earlier</a>
+  <a href="{{.Later}}">later →</a>
+</div>
+{{range .Messages}}
+<div class="hit{{if .Here}} here{{end}}" id="m{{.ID}}">
+  <div class="meta">{{.When}} · <strong>{{.From}}</strong>{{if .Edited}} · edited{{end}}{{if .Deleted}} · deleted{{end}}</div>
+  {{if .Text}}<div class="body chat">{{.Text}}</div>{{end}}
+  {{range .Media}}<div class="meta">{{if .SHA}}<a href="/blob/{{.SHA}}/{{.Name}}?inline=1">{{.Name}}</a>{{else}}{{.Name}} (not stored){{end}}</div>{{end}}
+</div>
+{{else}}
+<p class="meta">No message in this period.</p>
+{{end}}
+{{end}}

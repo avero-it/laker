@@ -113,6 +113,18 @@ func Reindex(ctx context.Context, lake out.Lake, index out.Indexer, lg zerolog.L
 	if err != nil {
 		return mails, files, err
 	}
+	// chat messages: the last row of each message wins (an edit after the original)
+	err = EachChat(ctx, lake, func(r domain.ChatRow) error {
+		doc := domain.NewChatDoc(r)
+		batch[doc.ID()] = doc
+		if len(batch) >= rebuildBatch {
+			return flush()
+		}
+		return nil
+	})
+	if err != nil {
+		return mails, files, err
+	}
 	return mails, files, flush()
 }
 
@@ -189,6 +201,38 @@ func RebuildState(ctx context.Context, lake out.Lake, state out.StateStore) (int
 	}
 	for k, hash := range rows {
 		changes = append(changes, out.StateChange{Bucket: domain.SourceBucket(k.source), Key: domain.RowStateKey(k.table, k.pk), Value: []byte(hash)})
+	}
+
+	chats := map[[2]string]*domain.ChatState{}
+	lastMsg := map[[2]string]domain.ChatRow{}
+	err = EachChat(ctx, lake, func(r domain.ChatRow) error {
+		if r.Service == "whatsapp" {
+			// the last version of each message, as the source keeps it
+			lastMsg[[2]string{r.Source, domain.ChatMsgStateKey(r.Chat(), r.Msg())}] = r
+			return nil
+		}
+		k := [2]string{r.Source, domain.ChatStateKey(r.ChatID)}
+		st := chats[k]
+		if st == nil {
+			// the first import may have stopped half way: the next run
+			// carries on from the last message, outside an export session
+			st = &domain.ChatState{Imported: true}
+			chats[k] = st
+		}
+		st.LastID = max(st.LastID, r.MsgID)
+		if r.EditDate.After(st.EditSeen) {
+			st.EditSeen = r.EditDate
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	for k, st := range chats {
+		changes = append(changes, out.StateChange{Bucket: domain.SourceBucket(k[0]), Key: k[1], Value: domain.MustJSON(st)})
+	}
+	for k, r := range lastMsg {
+		changes = append(changes, out.StateChange{Bucket: domain.SourceBucket(k[0]), Key: k[1], Value: domain.MustJSON(r)})
 	}
 
 	err = EachText(ctx, lake, func(t domain.TextRow) error {

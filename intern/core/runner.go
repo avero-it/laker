@@ -165,6 +165,7 @@ type runSink struct {
 	tables  map[string]parquetx.Buffer
 	mail    map[string]*domain.MailDoc // pending mail docs by sha
 	fileDoc map[string]domain.FileDoc
+	chatDoc map[string]domain.ChatDoc
 	unindex []string
 	staged  map[string][]byte // checkpoint changes; nil value: delete
 	stats   domain.RunStats   // since the last commit
@@ -174,6 +175,7 @@ func (s *runSink) reset() {
 	s.tables = map[string]parquetx.Buffer{}
 	s.mail = map[string]*domain.MailDoc{}
 	s.fileDoc = map[string]domain.FileDoc{}
+	s.chatDoc = map[string]domain.ChatDoc{}
 	s.unindex = nil
 	if !s.dryRun || s.staged == nil {
 		// a dry run never applies its state, so it keeps it staged for the
@@ -226,6 +228,11 @@ func (s *runSink) IndexMail(doc domain.MailDoc) {
 func (s *runSink) IndexFile(doc domain.FileDoc) {
 	doc.Kind = "file"
 	s.fileDoc[domain.FileDocID(doc.Source, doc.Path)] = doc
+}
+
+func (s *runSink) IndexChat(doc domain.ChatDoc) {
+	doc.Kind = "chat"
+	s.chatDoc[doc.ID()] = doc
 }
 
 func (s *runSink) UnindexFile(id string) {
@@ -295,6 +302,9 @@ func (s *runSink) Commit(ctx context.Context) error {
 	}
 	for _, d := range s.fileDoc {
 		c.FileDocs = append(c.FileDocs, d)
+	}
+	for _, d := range s.chatDoc {
+		c.ChatDocs = append(c.ChatDocs, d)
 	}
 
 	s.run.Stats.Rows += rows

@@ -12,6 +12,9 @@ type Query struct {
 	// Highlight styles the matched terms in the fragments: "ansi", "html" or
 	// "" for plain fragments.
 	Highlight string
+	// Sort lists fields, "-" first for descending; empty: by score (or by
+	// date when there is no text).
+	Sort []string
 }
 
 type SearchResult struct {

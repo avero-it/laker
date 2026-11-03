@@ -7,6 +7,9 @@ browse** all of it from one web page — including how things were on any past d
 - **Mail** (IMAP): every message kept as its original `.eml`, plus searchable headers and text.
 - **Files**: every content stored once (SHA-256), every change recorded; browse a folder as it was
   last month, download any past version. Text of PDF, Office, OpenDocument and HTML files is searchable.
+- **Telegram**: private chats and groups, with photos and documents; a slow first export, then sync.
+- **WhatsApp**: private chats and groups as a linked device of your phone; history at pairing, then new
+  messages, edits and deletions (kept, marked deleted).
 - **Databases** (Postgres, MySQL/MariaDB): latest rows and full history of every row, no
   `updated_at` column needed.
 - **Append-only**: nothing in the lake is ever deleted or overwritten; works with S3 Object Lock.
@@ -88,7 +91,7 @@ An adapter in `config.yaml`:
 adapters:
   - name: mail-personal
     enabled: true
-    type: imap                      # imap | fs | postgres | mysql
+    type: imap                      # imap | fs | postgres | mysql | telegram | whatsapp
     schedule: "@every 10m"          # 6-field cron, @every, @hourly, or manual
     params:
       host: imap.example.com
@@ -140,6 +143,7 @@ blobs/sha256/ab/cd/<sha256>                 originals: .eml, files
 mail/messages/account=<a>/month=YYYY-MM/    one row per message and folder
 files/inventory/source=<s>/dt=YYYY-MM-DD/   every add, modify, move, delete
 files/text/source=<s>/dt=YYYY-MM-DD/        text extracted from documents
+chat/messages/source=<s>/month=YYYY-MM/     Telegram and WhatsApp messages, edits and deletions as new rows
 db/<source>/<schema.table>/changes/dt=…/    row changelog: insert, update, delete
 _runs/  _state/  _index/                    manifests, snapshots of the derived data
 ```
@@ -151,4 +155,5 @@ _runs/  _state/  _index/                    manifests, snapshots of the derived 
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). The vendored dependencies keep their own licenses (in `vendor/`); `whatsmeow`, used by
+the WhatsApp source, is MPL-2.0.

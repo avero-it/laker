@@ -138,6 +138,40 @@ func EachText(ctx context.Context, lake out.Lake, fn func(domain.TextRow) error)
 	return nil
 }
 
+// EachChat visits every chat message row, in the order they were seen.
+func EachChat(ctx context.Context, lake out.Lake, fn func(domain.ChatRow) error) error {
+	var keys []string
+	err := lake.List(ctx, "chat/messages/", func(k string) error {
+		if strings.HasSuffix(k, ".parquet") {
+			keys = append(keys, k)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	var all []domain.ChatRow
+	for _, k := range keys {
+		rows, err := readParquet[domain.ChatRow](ctx, lake, k)
+		if err != nil {
+			return err
+		}
+		all = append(all, rows...)
+	}
+	sort.SliceStable(all, func(i, j int) bool {
+		if !all[i].SeenAt.Equal(all[j].SeenAt) {
+			return all[i].SeenAt.Before(all[j].SeenAt)
+		}
+		return all[i].RunID < all[j].RunID
+	})
+	for _, r := range all {
+		if err := fn(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 var zeroTime time.Time
 
 // TreeAt is the tree of each source at the given moment (zero: latest).
