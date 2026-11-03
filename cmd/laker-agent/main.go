@@ -137,7 +137,7 @@ func setupCLI() *cobra.Command {
 	discoverCmd.Flags().String("write", "", "configuration file to add the adapters to (default: the current one, or laker-agent.yaml)")
 	discoverCmd.Flags().Bool("interactive", false, "Ask questions on standard input even when it is not a terminal")
 	configCmd.AddCommand(generate, discoverCmd, validate)
-	root.AddCommand(serveCmd, idCmd, runCmd, listCmd, versionCmd, configCmd, telegramCmd(&configPath))
+	root.AddCommand(serveCmd, idCmd, runCmd, listCmd, versionCmd, configCmd, telegramCmd(&configPath), whatsappCmd(&configPath))
 	return root
 }
 

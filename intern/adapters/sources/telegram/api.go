@@ -28,7 +28,7 @@ type api interface {
 }
 
 type chat struct {
-	ID    int64  // Bot API style: users >0, groups <0
+	ID    int64 // Bot API style: users >0, groups <0
 	Title string
 	Type  string // private | group
 	peer  any    // the input peer of the implementation

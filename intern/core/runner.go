@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strconv"
 	"sort"
 	"strings"
 	"time"
@@ -233,8 +232,7 @@ func (s *runSink) IndexFile(doc domain.FileDoc) {
 
 func (s *runSink) IndexChat(doc domain.ChatDoc) {
 	doc.Kind = "chat"
-	n, _ := strconv.ParseInt(doc.ChatID, 10, 64)
-	s.chatDoc[domain.ChatDocID(doc.Source, n, doc.MsgID)] = doc
+	s.chatDoc[doc.ID()] = doc
 }
 
 func (s *runSink) UnindexFile(id string) {

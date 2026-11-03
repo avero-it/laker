@@ -108,6 +108,18 @@ github.com/aws/smithy-go/waiter
 ## explicit
 github.com/aymerick/douceur/css
 github.com/aymerick/douceur/parser
+# github.com/beeper/argo-go v1.1.2
+## explicit; go 1.23.0
+github.com/beeper/argo-go/block
+github.com/beeper/argo-go/codec
+github.com/beeper/argo-go/header
+github.com/beeper/argo-go/internal/util
+github.com/beeper/argo-go/label
+github.com/beeper/argo-go/pkg/bitset
+github.com/beeper/argo-go/pkg/buf
+github.com/beeper/argo-go/pkg/varint
+github.com/beeper/argo-go/wire
+github.com/beeper/argo-go/wirecodec
 # github.com/bits-and-blooms/bitset v1.24.2
 ## explicit; go 1.16
 github.com/bits-and-blooms/bitset
@@ -242,6 +254,9 @@ github.com/coder/websocket/internal/wsjs
 ## explicit; go 1.13
 github.com/dlclark/regexp2
 github.com/dlclark/regexp2/syntax
+# github.com/elliotchance/orderedmap/v3 v3.1.0
+## explicit; go 1.23.0
+github.com/elliotchance/orderedmap/v3
 # github.com/emersion/go-imap/v2 v2.0.0-beta.8
 ## explicit; go 1.18
 github.com/emersion/go-imap/v2
@@ -294,6 +309,8 @@ github.com/go-viper/mapstructure/v2/internal/errors
 # github.com/golang/snappy v1.0.0
 ## explicit
 github.com/golang/snappy
+# github.com/google/pprof v0.0.0-20261016150608-1facf8f91b50
+## explicit; go 1.26.0
 # github.com/google/uuid v1.6.0
 ## explicit
 github.com/google/uuid
@@ -433,9 +450,12 @@ github.com/klippa-app/go-pdfium/webassembly/imports
 # github.com/mattn/go-colorable v0.1.14
 ## explicit; go 1.18
 github.com/mattn/go-colorable
-# github.com/mattn/go-isatty v0.0.22
-## explicit; go 1.21
+# github.com/mattn/go-isatty v0.0.24
+## explicit; go 1.20
 github.com/mattn/go-isatty
+# github.com/mdp/qrterminal/v3 v3.2.1
+## explicit; go 1.20
+github.com/mdp/qrterminal/v3
 # github.com/microcosm-cc/bluemonday v1.0.27
 ## explicit; go 1.19
 github.com/microcosm-cc/bluemonday
@@ -443,6 +463,23 @@ github.com/microcosm-cc/bluemonday/css
 # github.com/mschoch/smat v0.2.0
 ## explicit; go 1.13
 github.com/mschoch/smat
+# github.com/ncruces/go-sqlite3 v0.36.0
+## explicit; go 1.26.0
+github.com/ncruces/go-sqlite3
+github.com/ncruces/go-sqlite3/driver
+github.com/ncruces/go-sqlite3/embed
+github.com/ncruces/go-sqlite3/internal/dotlk
+github.com/ncruces/go-sqlite3/internal/errutil
+github.com/ncruces/go-sqlite3/internal/sqlite3_wrap
+github.com/ncruces/go-sqlite3/internal/testenv
+github.com/ncruces/go-sqlite3/internal/util
+github.com/ncruces/go-sqlite3/vfs
+# github.com/ncruces/go-sqlite3-wasm/v6 v6.4.35401
+## explicit; go 1.26.0
+github.com/ncruces/go-sqlite3-wasm/v6
+# github.com/ncruces/julianday v1.0.0
+## explicit; go 1.17
+github.com/ncruces/julianday
 # github.com/ogen-go/ogen v1.23.0
 ## explicit; go 1.25.0
 github.com/ogen-go/ogen
@@ -516,6 +553,9 @@ github.com/pelletier/go-toml/v2/internal/characters
 github.com/pelletier/go-toml/v2/internal/danger
 github.com/pelletier/go-toml/v2/internal/tracker
 github.com/pelletier/go-toml/v2/unstable
+# github.com/petermattis/goid v0.0.0-20260918085751-abfca077860b
+## explicit; go 1.17
+github.com/petermattis/goid
 # github.com/pierrec/lz4/v4 v4.1.21
 ## explicit; go 1.14
 github.com/pierrec/lz4/v4
@@ -551,6 +591,7 @@ github.com/robfig/cron/v3
 github.com/rs/zerolog
 github.com/rs/zerolog/internal/cbor
 github.com/rs/zerolog/internal/json
+github.com/rs/zerolog/log
 # github.com/sagikazarmark/locafero v0.11.0
 ## explicit; go 1.23.0
 github.com/sagikazarmark/locafero
@@ -643,6 +684,9 @@ github.com/tiendc/go-deepcopy
 github.com/twpayne/go-geom
 github.com/twpayne/go-geom/encoding/wkb
 github.com/twpayne/go-geom/encoding/wkbcommon
+# github.com/vektah/gqlparser/v2 v2.5.27
+## explicit; go 1.22
+github.com/vektah/gqlparser/v2/ast
 # github.com/xuri/efp v0.0.1
 ## explicit; go 1.11
 github.com/xuri/efp
@@ -669,6 +713,111 @@ go.etcd.io/bbolt
 go.etcd.io/bbolt/errors
 go.etcd.io/bbolt/internal/common
 go.etcd.io/bbolt/internal/freelist
+# go.mau.fi/libsignal v0.2.2
+## explicit; go 1.25.0
+go.mau.fi/libsignal/cipher
+go.mau.fi/libsignal/ecc
+go.mau.fi/libsignal/groups
+go.mau.fi/libsignal/groups/ratchet
+go.mau.fi/libsignal/groups/state/record
+go.mau.fi/libsignal/groups/state/store
+go.mau.fi/libsignal/kdf
+go.mau.fi/libsignal/keys/chain
+go.mau.fi/libsignal/keys/identity
+go.mau.fi/libsignal/keys/message
+go.mau.fi/libsignal/keys/prekey
+go.mau.fi/libsignal/keys/root
+go.mau.fi/libsignal/keys/session
+go.mau.fi/libsignal/logger
+go.mau.fi/libsignal/protocol
+go.mau.fi/libsignal/ratchet
+go.mau.fi/libsignal/serialize
+go.mau.fi/libsignal/session
+go.mau.fi/libsignal/signalerror
+go.mau.fi/libsignal/state/record
+go.mau.fi/libsignal/state/store
+go.mau.fi/libsignal/util/bytehelper
+go.mau.fi/libsignal/util/errorhelper
+go.mau.fi/libsignal/util/keyhelper
+go.mau.fi/libsignal/util/medium
+go.mau.fi/libsignal/util/optional
+# go.mau.fi/util v0.11.0
+## explicit; go 1.26.0
+go.mau.fi/util/dbutil
+go.mau.fi/util/exbytes
+go.mau.fi/util/exerrors
+go.mau.fi/util/exhttp
+go.mau.fi/util/exmaps
+go.mau.fi/util/exslices
+go.mau.fi/util/exstrings
+go.mau.fi/util/exsync
+go.mau.fi/util/exzerolog
+go.mau.fi/util/fallocate
+go.mau.fi/util/jsonbytes
+go.mau.fi/util/jsontime
+go.mau.fi/util/ptr
+go.mau.fi/util/random
+go.mau.fi/util/retryafter
+# go.mau.fi/whatsmeow v0.0.0-20261102152715-54038813c47f
+## explicit; go 1.26.0
+go.mau.fi/whatsmeow
+go.mau.fi/whatsmeow/appstate
+go.mau.fi/whatsmeow/appstate/lthash
+go.mau.fi/whatsmeow/argo
+go.mau.fi/whatsmeow/binary
+go.mau.fi/whatsmeow/binary/token
+go.mau.fi/whatsmeow/proto
+go.mau.fi/whatsmeow/proto/armadilloutil
+go.mau.fi/whatsmeow/proto/instamadilloAddMessage
+go.mau.fi/whatsmeow/proto/instamadilloCoreTypeActionLog
+go.mau.fi/whatsmeow/proto/instamadilloCoreTypeAdminMessage
+go.mau.fi/whatsmeow/proto/instamadilloCoreTypeCollection
+go.mau.fi/whatsmeow/proto/instamadilloCoreTypeLink
+go.mau.fi/whatsmeow/proto/instamadilloCoreTypeMedia
+go.mau.fi/whatsmeow/proto/instamadilloCoreTypeText
+go.mau.fi/whatsmeow/proto/instamadilloDeleteMessage
+go.mau.fi/whatsmeow/proto/instamadilloSupplementMessage
+go.mau.fi/whatsmeow/proto/instamadilloTransportPayload
+go.mau.fi/whatsmeow/proto/instamadilloXmaContentRef
+go.mau.fi/whatsmeow/proto/waAICommon
+go.mau.fi/whatsmeow/proto/waAICommonDeprecated
+go.mau.fi/whatsmeow/proto/waAdv
+go.mau.fi/whatsmeow/proto/waAea
+go.mau.fi/whatsmeow/proto/waArmadilloApplication
+go.mau.fi/whatsmeow/proto/waArmadilloXMA
+go.mau.fi/whatsmeow/proto/waCert
+go.mau.fi/whatsmeow/proto/waChatLockSettings
+go.mau.fi/whatsmeow/proto/waCommon
+go.mau.fi/whatsmeow/proto/waCompanionReg
+go.mau.fi/whatsmeow/proto/waConsumerApplication
+go.mau.fi/whatsmeow/proto/waDeviceCapabilities
+go.mau.fi/whatsmeow/proto/waE2E
+go.mau.fi/whatsmeow/proto/waHistorySync
+go.mau.fi/whatsmeow/proto/waLidMigrationSyncPayload
+go.mau.fi/whatsmeow/proto/waMediaTransport
+go.mau.fi/whatsmeow/proto/waMmsRetry
+go.mau.fi/whatsmeow/proto/waMsgApplication
+go.mau.fi/whatsmeow/proto/waMsgTransport
+go.mau.fi/whatsmeow/proto/waMultiDevice
+go.mau.fi/whatsmeow/proto/waServerSync
+go.mau.fi/whatsmeow/proto/waStatusAttributions
+go.mau.fi/whatsmeow/proto/waSyncAction
+go.mau.fi/whatsmeow/proto/waSyncdSnapshotRecovery
+go.mau.fi/whatsmeow/proto/waUserPassword
+go.mau.fi/whatsmeow/proto/waVnameCert
+go.mau.fi/whatsmeow/proto/waWa6
+go.mau.fi/whatsmeow/proto/waWeb
+go.mau.fi/whatsmeow/socket
+go.mau.fi/whatsmeow/store
+go.mau.fi/whatsmeow/store/sqlstore
+go.mau.fi/whatsmeow/store/sqlstore/upgrades
+go.mau.fi/whatsmeow/types
+go.mau.fi/whatsmeow/types/events
+go.mau.fi/whatsmeow/util/cbcutil
+go.mau.fi/whatsmeow/util/gcmutil
+go.mau.fi/whatsmeow/util/hkdfutil
+go.mau.fi/whatsmeow/util/keys
+go.mau.fi/whatsmeow/util/log
 # go.opentelemetry.io/otel v1.44.0
 ## explicit; go 1.25.0
 go.opentelemetry.io/otel/attribute
@@ -711,6 +860,7 @@ golang.org/x/crypto/chacha20
 golang.org/x/crypto/chacha20poly1305
 golang.org/x/crypto/cryptobyte
 golang.org/x/crypto/cryptobyte/asn1
+golang.org/x/crypto/curve25519
 golang.org/x/crypto/hkdf
 golang.org/x/crypto/internal/alias
 golang.org/x/crypto/internal/poly1305
@@ -718,11 +868,11 @@ golang.org/x/crypto/md4
 golang.org/x/crypto/pbkdf2
 golang.org/x/crypto/ripemd160
 golang.org/x/crypto/sha3
-# golang.org/x/exp v0.0.0-20230725093048-515e97ebf090
-## explicit; go 1.20
+# golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e
+## explicit; go 1.26.0
 golang.org/x/exp/constraints
 golang.org/x/exp/maps
-# golang.org/x/mod v0.41.0
+# golang.org/x/mod v0.42.0
 ## explicit; go 1.26.0
 golang.org/x/mod/internal/lazyregexp
 golang.org/x/mod/module
@@ -733,7 +883,11 @@ golang.org/x/net/html
 golang.org/x/net/html/atom
 golang.org/x/net/html/charset
 golang.org/x/net/http/httpguts
+golang.org/x/net/http2
+golang.org/x/net/http2/hpack
 golang.org/x/net/idna
+golang.org/x/net/internal/httpcommon
+golang.org/x/net/internal/httpsfv
 golang.org/x/net/internal/socks
 golang.org/x/net/proxy
 # golang.org/x/sync v0.24.0
@@ -788,7 +942,7 @@ golang.org/x/text/width
 # golang.org/x/time v0.16.0
 ## explicit; go 1.26.0
 golang.org/x/time/rate
-# golang.org/x/tools v0.51.0
+# golang.org/x/tools v0.52.0
 ## explicit; go 1.26.0
 golang.org/x/tools/go/ast/astutil
 golang.org/x/tools/go/ast/edge
@@ -812,7 +966,7 @@ golang.org/x/tools/internal/pkgbits
 golang.org/x/tools/internal/stdlib
 golang.org/x/tools/internal/typesinternal
 golang.org/x/tools/internal/versions
-# google.golang.org/protobuf v1.36.11
+# google.golang.org/protobuf v1.36.12
 ## explicit; go 1.23
 google.golang.org/protobuf/encoding/protojson
 google.golang.org/protobuf/encoding/prototext

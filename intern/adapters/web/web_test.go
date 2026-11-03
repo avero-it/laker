@@ -285,7 +285,7 @@ func TestChat(t *testing.T) {
 		!strings.Contains(conv, `class="hit here"`) || !strings.Contains(conv, "/blob/"+sum("text")+"/p.jpg") {
 		t.Errorf("conversation (%d):\n%s", code, conv)
 	}
-	if code, _, _ := body(t, c, ts.URL+"/chat/tg/notanumber"); code != 404 {
+	if code, _, _ := body(t, c, ts.URL+"/chat/tg/bad%20id%3F"); code != 404 {
 		t.Errorf("bad chat id: %d", code)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
 	"time"
 
 	"github.com/avero-it/laker/intern/core/domain"
@@ -111,8 +110,7 @@ func (l *LocalIngest) Commit(ctx context.Context, c domain.Commit) error {
 	}
 	for _, d := range c.ChatDocs {
 		d.Kind = "chat"
-		n, _ := strconv.ParseInt(d.ChatID, 10, 64)
-		docs[domain.ChatDocID(d.Source, n, d.MsgID)] = d
+		docs[d.ID()] = d
 	}
 	for _, id := range c.Unindex {
 		delete(docs, id)

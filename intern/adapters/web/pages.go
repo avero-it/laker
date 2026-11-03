@@ -127,7 +127,7 @@ func (s *Server) search(w http.ResponseWriter, r *http.Request) {
 		case "chat":
 			v.Chat, v.From, v.When, v.Source = str(f["chat"]), str(f["from"]), s.when(f["date"]), str(f["source"])
 			v.ChatLink = "/chat/" + url.PathEscape(v.Source) + "/" + url.PathEscape(str(f["chat_id"])) + "?" +
-				url.Values{"around": {fmt.Sprint(num(f["msg_id"]))}, "date": {str(f["date"])}}.Encode()
+				url.Values{"around": {str(f["msg_key"])}, "date": {str(f["date"])}}.Encode()
 		default:
 			p := str(f["path"])
 			v.Name, v.Dir, v.Source = path.Base(p), path.Dir(p), str(f["source"])

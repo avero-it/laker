@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
+	"regexp"
 	"time"
 
 	"github.com/avero-it/laker/intern/core/domain"
 )
+
+// chatIDRE matches Telegram ids (numbers) and WhatsApp ids (JIDs).
+var chatIDRE = regexp.MustCompile(`^-?[0-9A-Za-z][0-9A-Za-z@._:-]*$`)
 
 // chatWindow is the period of a conversation one page shows.
 const chatWindow = 3 * 24 * time.Hour
@@ -16,11 +19,11 @@ const chatWindow = 3 * 24 * time.Hour
 type chatMediaView struct{ Name, SHA string }
 
 type chatMessageView struct {
-	ID           int64
-	When, From   string
-	Text         string
-	Edited, Here bool
-	Media        []chatMediaView
+	ID                    string
+	When, From            string
+	Text                  string
+	Edited, Deleted, Here bool
+	Media                 []chatMediaView
 }
 
 func list(v any) []string {
@@ -41,7 +44,7 @@ func list(v any) []string {
 // every message is a document with its chat, its date and its text.
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	source, chatID := r.PathValue("source"), r.PathValue("chat")
-	if _, err := strconv.ParseInt(chatID, 10, 64); err != nil {
+	if !chatIDRE.MatchString(chatID) {
 		s.fail(w, http.StatusNotFound, "Chat not found", fmt.Errorf("ERR40F: %q is not a chat id", chatID))
 		return
 	}
@@ -50,7 +53,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		center = time.Now()
 	}
-	around, _ := strconv.ParseInt(q.Get("around"), 10, 64)
+	around := q.Get("around")
 	from, to := center.Add(-chatWindow), center.Add(chatWindow)
 
 	res, err := s.Index.Search(r.Context(), domain.Query{
@@ -67,8 +70,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	for _, h := range res.Hits {
 		f := h.Fields
 		title = str(f["chat"])
-		m := chatMessageView{ID: num(f["msg_id"]), When: s.when(f["date"]), From: str(f["from"]), Text: str(f["text"])}
-		m.Here, m.Edited = m.ID == around, f["edited"] == true
+		m := chatMessageView{ID: str(f["msg_key"]), When: s.when(f["date"]), From: str(f["from"]), Text: str(f["text"])}
+		m.Here, m.Edited, m.Deleted = m.ID != "" && m.ID == around, f["edited"] == true, f["deleted"] == true
 		names, blobs := list(f["media"]), list(f["blobs"])
 		for i, n := range names {
 			mv := chatMediaView{Name: n}

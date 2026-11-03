@@ -14,6 +14,7 @@ import (
 	"github.com/avero-it/laker/intern/adapters/sources/imap"
 	"github.com/avero-it/laker/intern/adapters/sources/sqldb"
 	"github.com/avero-it/laker/intern/adapters/sources/telegram"
+	"github.com/avero-it/laker/intern/adapters/sources/whatsapp"
 	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 	"github.com/avero-it/laker/pkg/config"
@@ -27,6 +28,7 @@ var Types = map[string]bool{
 	sqldb.TypePostgres: true,
 	sqldb.TypeMySQL:    true,
 	telegram.Type:      true,
+	whatsapp.Type:      true,
 }
 
 func Sorted() []string {
@@ -50,7 +52,7 @@ type Env struct {
 
 // Stubs are one documented adapter of every type, for `config generate`.
 func Stubs() []config.GenAdapter {
-	return []config.GenAdapter{imap.Stub(), fssource.Stub(), sqldb.Stub(sqldb.TypePostgres), sqldb.Stub(sqldb.TypeMySQL), telegram.Stub()}
+	return []config.GenAdapter{imap.Stub(), fssource.Stub(), sqldb.Stub(sqldb.TypePostgres), sqldb.Stub(sqldb.TypeMySQL), telegram.Stub(), whatsapp.Stub()}
 }
 
 // ProbeTimeout bounds one live check.
@@ -81,6 +83,8 @@ func Build(a config.Adapter, env Env, lg zerolog.Logger) (out.Source, error) {
 		return sqldb.New(a.Name, a.Type, a.Params, env.CommitEvery, lg)
 	case telegram.Type:
 		return telegram.New(a.Name, a.Params, env.CommitEvery, env.DataDir, env.TmpDir, lg)
+	case whatsapp.Type:
+		return whatsapp.New(a.Name, a.Params, env.CommitEvery, env.DataDir, env.TmpDir, lg)
 	default:
 		return nil, fmt.Errorf("ERR2F0: unknown adapter type %q", a.Type)
 	}

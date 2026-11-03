@@ -143,6 +143,8 @@ func newMapping() mapping.IndexMapping {
 	chat.AddFieldMappingsAt("source", kw())
 	chat.AddFieldMappingsAt("chat_id", kw())
 	chat.AddFieldMappingsAt("blobs", kw())
+	chat.AddFieldMappingsAt("msg_key", kw())
+	chat.AddFieldMappingsAt("deleted", bleve.NewBooleanFieldMapping())
 	chat.AddFieldMappingsAt("msg_id", num)
 	chat.AddFieldMappingsAt("date", date)
 	for _, f := range []string{"chat", "from", "text", "media"} {
@@ -216,7 +218,7 @@ const (
 
 	// mappingVersion changes whenever newMapping does: an index built with
 	// another mapping must be rebuilt (laker reindex).
-	mappingVersion = "3"
+	mappingVersion = "4"
 	mappingKey     = "laker_mapping"
 )
 

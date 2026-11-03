@@ -2,16 +2,14 @@ package telegram
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"os"
 	"slices"
+	"strconv"
 	"time"
 
+	"github.com/avero-it/laker/intern/adapters/sources/chatmedia"
 	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 	"github.com/avero-it/laker/pkg/parquetx"
@@ -149,6 +147,10 @@ func (s *Source) record(ctx context.Context, tg api, rs out.RunSink, c chat, m m
 		Source: s.name, Service: "telegram", ChatID: c.ID, ChatTitle: c.Title, ChatType: c.Type,
 		MsgID: m.ID, Date: m.Date.UTC(), EditDate: m.EditDate.UTC(), Op: op, FromID: m.FromID, FromName: m.FromName,
 		Text: m.Text, ReplyTo: m.ReplyTo, ForwardedFrom: m.Forwarded, SeenAt: s.now().UTC(), RunID: rs.RunID(),
+		ChatKey: strconv.FormatInt(c.ID, 10), MsgKey: strconv.FormatInt(m.ID, 10), FromKey: strconv.FormatInt(m.FromID, 10),
+	}
+	if m.ReplyTo != 0 {
+		row.ReplyKey = strconv.FormatInt(m.ReplyTo, 10)
 	}
 	if m.Media != nil {
 		row.Media = []domain.ChatMedia{s.media(ctx, tg, rs, m.Media)}
@@ -187,43 +189,7 @@ func (s *Source) media(ctx context.Context, tg api, rs out.RunSink, m *media) do
 }
 
 func (s *Source) download(ctx context.Context, tg api, rs out.RunSink, m *media) (string, int64, error) {
-	if err := os.MkdirAll(s.tmpDir, 0o750); err != nil {
-		return "", 0, fmt.Errorf("ERR244: %w", err)
-	}
-	tmp, err := os.CreateTemp(s.tmpDir, "telegram-")
-	if err != nil {
-		return "", 0, fmt.Errorf("ERR245: %w", err)
-	}
-	defer os.Remove(tmp.Name()) // local scratch copy, not the lake
-	defer tmp.Close()
-
-	h := sha256.New()
-	cw := &countingWriter{w: io.MultiWriter(tmp, h), max: s.p.MediaMaxSize}
-	if err := tg.Download(ctx, m, cw); err != nil {
-		return "", 0, err
-	}
-	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
-		return "", 0, fmt.Errorf("ERR246: %w", err)
-	}
-	sha := hex.EncodeToString(h.Sum(nil))
-	_, err = rs.PutBlob(ctx, sha, cw.n, tmp)
-	return sha, cw.n, err
-}
-
-var errTooLarge = errors.New("ERR247: the media is larger than mediamaxsize")
-
-// countingWriter stops a download that grows past the limit.
-type countingWriter struct {
-	w   io.Writer
-	n   int64
-	max int64
-}
-
-func (c *countingWriter) Write(p []byte) (int, error) {
-	if c.n+int64(len(p)) > c.max {
-		return 0, errTooLarge
-	}
-	n, err := c.w.Write(p)
-	c.n += int64(n)
-	return n, err
+	return chatmedia.Store(ctx, rs, s.tmpDir, "telegram", s.p.MediaMaxSize, func(w io.Writer) error {
+		return tg.Download(ctx, m, w)
+	})
 }
