@@ -51,7 +51,11 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           workdir: src
-          args: release --clean --config ${{ github.workspace }}/cfg/.goreleaser.yaml
+          # --parallelism 2: ten static binaries (laker + laker-agent, several
+          # platforms each) link in parallel; at the hosted runner's default
+          # (one task per CPU) the peak memory exhausts it and the runner is
+          # killed mid-build. Two at a time stays within the 7 GB.
+          args: release --clean --parallelism 2 --config ${{ github.workspace }}/cfg/.goreleaser.yaml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Fine-grained PAT (Contents read/write on avero-it/homebrew-tap and
