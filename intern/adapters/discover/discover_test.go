@@ -55,6 +55,51 @@ Method=ssl-on-alternate-port
 	os.MkdirAll(filepath.Join(home, "Docs"), 0o755)
 	os.MkdirAll(filepath.Join(home, "Desk"), 0o755)
 	write(t, filepath.Join(home, ".config", "user-dirs.dirs"), "XDG_DESKTOP_DIR=\"$HOME/Desk\"\nXDG_DOCUMENTS_DIR=\"$HOME/Docs\"\nXDG_MUSIC_DIR=\"$HOME/Music\"\n")
+	// Other mail clients. mutt, offlineimap and mbsync keep the password in
+	// clear text here on purpose: discovery must still never read it.
+	write(t, filepath.Join(home, ".muttrc"), `
+set folder = "imaps://imap.muttmail.test:993/"
+set imap_user = "mu"
+set imap_pass = "PLAINTEXT_MUST_NOT_BE_READ"
+`)
+	write(t, filepath.Join(home, ".claws-mail", "accountrc"), `
+[Account: 1]
+protocol=3
+receive_server=imap.clawsmail.test
+user_id=cl
+ssl_imap=1
+`)
+	write(t, filepath.Join(home, ".local", "share", "geary", "cl@geary.test", "geary.ini"), `
+[AccountInformation]
+service_provider=OTHER
+imap_host=imap.gearymail.test
+imap_port=993
+imap_username=ge
+imap_ssl=true
+`)
+	write(t, filepath.Join(home, ".config", "akonadi_imap_resource_0rc"), `
+[network]
+ImapServer=imap.kmailmail.test
+UserName=km
+Safety=SSL
+`)
+	write(t, filepath.Join(home, ".offlineimaprc"), `
+[Repository Off-Remote]
+type = IMAP
+remotehost = imap.offmail.test
+remoteuser = off
+ssl = yes
+remotepass = PLAINTEXT_MUST_NOT_BE_READ
+`)
+	write(t, filepath.Join(home, ".mbsyncrc"), `
+IMAPAccount mb-acct
+Host imap.mbsyncmail.test
+User mb
+SSLType IMAPS
+Pass "PLAINTEXT_MUST_NOT_BE_READ"
+MaildirStore mb-local
+Path ~/Mail/
+`)
 	os.MkdirAll(filepath.Join(home, ".local", "share", "TelegramDesktop", "tdata"), 0o700)
 	os.MkdirAll(filepath.Join(home, ".var", "app", "com.rtosta.zapzap"), 0o700)
 	mounts := filepath.Join(home, "mounts")
@@ -141,6 +186,39 @@ func TestDiscover(t *testing.T) {
 	for _, c := range got {
 		if c.Adapter.Enabled {
 			t.Errorf("%s enabled", c.Adapter.Name)
+		}
+	}
+}
+
+func TestMailClients(t *testing.T) {
+	got := byName(Run(context.Background(), fixture(t), "home"))
+	for _, tc := range []struct{ name, host string }{
+		{"home-mail-muttmail-mu", "imap.muttmail.test"},
+		{"home-mail-clawsmail-cl", "imap.clawsmail.test"},
+		{"home-mail-gearymail-ge", "imap.gearymail.test"},
+		{"home-mail-kmailmail-km", "imap.kmailmail.test"},
+		{"home-mail-offmail-off", "imap.offmail.test"},
+		{"home-mail-mbsyncmail-mb", "imap.mbsyncmail.test"},
+	} {
+		c, ok := got[tc.name]
+		if !ok {
+			t.Errorf("%s: not discovered", tc.name)
+			continue
+		}
+		if param(c, "host") != tc.host || param(c, "security") != "tls" || param(c, "port") != 993 {
+			t.Errorf("%s: host=%v security=%v port=%v", tc.name, param(c, "host"), param(c, "security"), param(c, "port"))
+		}
+		if len(c.Secrets) != 1 || c.Secrets[0].Found() {
+			t.Errorf("%s: a password was read: %+v", tc.name, c.Secrets)
+		}
+	}
+	// The plaintext passwords in the mutt, offlineimap and mbsync fixtures
+	// must appear nowhere in the output.
+	for _, c := range got {
+		for _, s := range c.Secrets {
+			if strings.Contains(s.Value, "PLAINTEXT") {
+				t.Errorf("%s leaked a password: %q", c.Adapter.Name, s.Value)
+			}
 		}
 	}
 }

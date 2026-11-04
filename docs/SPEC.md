@@ -498,7 +498,9 @@ The configuration is the hard part for a single user or a small company, so the 
   the mailboxes and lists the selected folders, reads the directories (bounded count of files and bytes),
   connects to the databases, opens the read-only snapshot a run would use and lists the selected tables.
   `--offline` checks the form only; `--json` for scripts. The variables of disabled adapters need not be set.
-- **`laker-agent config discover`** looks, read-only and locally, for: IMAP accounts of Thunderbird and Evolution;
+- **`laker-agent config discover`** looks, read-only and locally, for: IMAP accounts of Thunderbird, Evolution,
+  Claws Mail, Geary, KMail, mutt/neomutt, OfflineIMAP and mbsync/isync (host, port, security and user name only,
+  never the password, even when a client keeps it in clear text);
   the document folders (XDG names, so localized ones too); mounted network shares; Postgres (`.pgpass`,
   `PG*` variables, a server on 5432) and MySQL/MariaDB (`.my.cnf`, a server on 3306); Postgres, MySQL and
   MariaDB containers through the Docker socket, with the credentials of their environment. On a terminal

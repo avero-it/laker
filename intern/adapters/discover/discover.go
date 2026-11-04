@@ -86,7 +86,10 @@ type Candidate struct {
 
 type detector func(ctx context.Context, env Env, prefix string) []Candidate
 
-var detectors = []detector{thunderbird, evolution, folders, shares, postgres, mysql, docker, telegram, whatsapp}
+var detectors = []detector{
+	thunderbird, evolution, mutt, clawsMail, geary, kmail, offlineimap, mbsync,
+	folders, shares, postgres, mysql, docker, telegram, whatsapp,
+}
 
 // Run asks every detector; adapter names start with prefix (the agent name)
 // and are unique.
