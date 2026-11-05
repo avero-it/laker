@@ -4,7 +4,7 @@ import "time"
 
 // SchemaVersion is the shape of Config this build expects. It goes up by one
 // whenever a yaml key is added, renamed, removed or changes type.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 type Config struct {
 	SchemaVersion int       `yaml:"schemaversion"`
@@ -23,6 +23,7 @@ type Common struct {
 	Lake     Lake     `yaml:"lake"`
 	Snapshot Snapshot `yaml:"snapshot"`
 	Web      Web      `yaml:"web"`
+	MCP      MCP      `yaml:"mcp"`
 	Agents   Agents   `yaml:"agents"`
 	Defaults Defaults `yaml:"defaults"`
 }
@@ -42,7 +43,24 @@ type Web struct {
 	// Token is asked once by the login page (and sent by the CLI); at least
 	// 16 characters.
 	Token string `yaml:"token"`
+	// PublicURL is the https address the listener is reached at through the
+	// reverse proxy, e.g. "https://laker.example.com"; required by mcp.
+	PublicURL string `yaml:"publicurl"`
 }
+
+// MCP serves the lake to MCP clients such as Claude connectors, read-only, at
+// <publicurl>/mcp, behind OAuth: the owner approves each client with the web
+// token.
+type MCP struct {
+	Enabled bool `yaml:"enabled"`
+	// RedirectURIs are the only OAuth callbacks a client may register; empty
+	// means Claude's (DefaultMCPRedirectURIs).
+	RedirectURIs []string `yaml:"redirecturis"`
+}
+
+// DefaultMCPRedirectURIs are the OAuth callbacks of Claude's connectors
+// (claude.ai, desktop and mobile apps).
+var DefaultMCPRedirectURIs = []string{"https://claude.ai/api/mcp/auth_callback"}
 
 // Snapshot copies the local state and search index to the lake (_state/,
 // _index/), so a new host restores them instead of rebuilding.

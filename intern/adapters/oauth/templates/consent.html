@@ -1,0 +1,24 @@
+{{define "consent"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connect · Laker</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<form class="login" method="post" action="/oauth/authorize">
+  <h1>Laker</h1>
+  {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
+  {{if .Client}}
+  <p><strong>{{.Client}}</strong> asks to read the whole lake (search, mail, files, chats) through MCP.</p>
+  <p class="meta">It returns to <code>{{.Redirect}}</code>. Approve only if you started this connection.</p>
+  {{range $k, $v := .Params}}<input type="hidden" name="{{$k}}" value="{{$v}}">
+  {{end}}
+  <input type="password" name="token" placeholder="Web token" autofocus autocomplete="current-password">
+  <button type="submit" name="action" value="approve">Approve</button>
+  <button class="link" type="submit" name="action" value="deny">Deny</button>
+  {{end}}
+</form>
+</body>
+</html>{{end}}

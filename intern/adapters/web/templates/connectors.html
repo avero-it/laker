@@ -1,0 +1,22 @@
+{{define "content"}}
+<h1>Connectors</h1>
+{{if not .Enabled}}<div class="notice">MCP is disabled: set <code>common.mcp.enabled: true</code> and <code>common.web.publicurl</code> in the laker configuration.</div>{{end}}
+{{if .Notice}}<div class="notice">{{.Notice}}</div>{{end}}
+{{if .Enabled}}
+<p class="meta">MCP clients, such as a Claude custom connector, read the lake at <code>{{.URL}}</code>. Each one is approved once with the web token; revoking it ends its access at once.</p>
+<table>
+  <tr><th>Client</th><th class="hide-sm">Returns to</th><th>Approved</th><th class="hide-sm">Last used</th><th></th></tr>
+  {{range .Connectors}}
+  <tr>
+    <td>{{.Name}}<div class="meta">registered {{.Created}}</div></td>
+    <td class="hide-sm meta">{{.Redirects}}</td>
+    <td class="meta">{{.Approved}}</td>
+    <td class="hide-sm meta">{{.LastUsed}}</td>
+    <td><form method="post" action="/connectors/{{.ID}}/revoke"><button class="link" type="submit">Revoke</button></form></td>
+  </tr>
+  {{else}}
+  <tr><td colspan="5" class="meta">No client has registered yet.</td></tr>
+  {{end}}
+</table>
+{{end}}
+{{end}}

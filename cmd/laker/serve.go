@@ -18,6 +18,8 @@ import (
 
 	"github.com/avero-it/laker/intern/adapters/agentapi"
 	"github.com/avero-it/laker/intern/adapters/indexer/bleve"
+	"github.com/avero-it/laker/intern/adapters/mcp"
+	"github.com/avero-it/laker/intern/adapters/oauth"
 	"github.com/avero-it/laker/intern/adapters/state/bbolt"
 	"github.com/avero-it/laker/intern/adapters/web"
 	"github.com/avero-it/laker/intern/core"
@@ -137,12 +139,38 @@ func commandServe(configPath string) {
 			return
 		}
 		defer release()
-		srv, err := web.New(web.Deps{
+		var srv *web.Server
+		deps := web.Deps{
 			Lake: lake, Index: index, State: state, Adapters: adapters, Runs: sch, LakeInfo: info,
 			Location: loc, Token: wc.Token, Version: version.GetVersion(),
 			Logger: lf.For("WEB", color.New(color.FgBlue).SprintFunc()),
 			Agents: agentsHandler(cfg, lake, stores, state, lf), AgentsEnabled: cfg.Common.Agents.Enabled,
-		})
+		}
+		if cfg.Common.MCP.Enabled {
+			grants, err := bbolt.Open(oauthPath(cfg), serveWait)
+			if err != nil {
+				lg.Error().Msgf("ERR00F: cannot open the OAuth store: %v", err)
+				return
+			}
+			defer grants.Close()
+			redirects := cfg.Common.MCP.RedirectURIs
+			if len(redirects) == 0 {
+				redirects = config.DefaultMCPRedirectURIs
+			}
+			mcpLog := lf.For("MCP", color.New(color.FgHiBlue).SprintFunc())
+			if deps.OAuth, err = oauth.New(oauth.Options{
+				PublicURL: wc.PublicURL, RedirectURIs: redirects, Token: wc.Token, Store: grants, Logger: mcpLog,
+			}); err != nil {
+				lg.Error().Msgf("ERR011: %v", err)
+				return
+			}
+			deps.MCP = mcp.Handler(mcp.Deps{
+				Lake: lake, Index: index, State: state, Location: loc, Version: version.GetVersion(),
+				Status: func() any { return srv.Statuses() },
+			})
+			lg.Info().Str("url", deps.OAuth.Resource()).Msg("INF008: MCP enabled")
+		}
+		srv, err = web.New(deps)
 		if err != nil {
 			lg.Error().Msgf("ERR00A: %v", err)
 			return

@@ -79,8 +79,10 @@ type AdapterStatus struct {
 	Last     *domain.Run `json:"last,omitempty"`
 }
 
-func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
-	var out []AdapterStatus
+// Statuses are the adapters of this laker and of its agents, with their
+// last run.
+func (s *Server) Statuses() []AdapterStatus {
+	out := []AdapterStatus{}
 	for _, a := range s.Adapters {
 		st := AdapterStatus{Name: a.Name, Type: a.Type, Enabled: a.Enabled, Schedule: a.Schedule,
 			Running: s.Runs.Running(a.Name), Next: s.Runs.Next(a.Name)}
@@ -95,7 +97,11 @@ func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
 		st.Last, _ = core.LastRun(s.State, v.Name)
 		out = append(out, st)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out
+}
+
+func (s *Server) apiStatus(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.Statuses())
 }
 
 // apiRun starts a job, as the "Run now" button does: 202 started,

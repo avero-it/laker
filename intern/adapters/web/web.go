@@ -20,6 +20,7 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/avero-it/laker/intern/adapters/oauth"
 	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 )
@@ -61,6 +62,10 @@ type Deps struct {
 	// Agents receives the data of the agents (/agent/v1/), nil if disabled.
 	Agents        http.Handler
 	AgentsEnabled bool
+	// OAuth guards MCP (/mcp, behind its own tokens, not the web token);
+	// both nil if MCP is disabled.
+	OAuth *oauth.Server
+	MCP   http.Handler
 }
 
 type Server struct {
@@ -74,7 +79,7 @@ func New(d Deps) (*Server, error) {
 	}
 	s := &Server{Deps: d, pages: map[string]*template.Template{}}
 	funcs := template.FuncMap{}
-	for _, page := range []string{"search", "mail", "chat", "sources", "files", "history", "status", "agents", "error"} {
+	for _, page := range []string{"search", "mail", "chat", "sources", "files", "history", "status", "agents", "connectors", "error"} {
 		t, err := template.New("layout").Funcs(funcs).ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("ERR402: template %s: %w", page, err)
@@ -112,6 +117,13 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /run/{name}", auth(s.run))
 	mux.Handle("GET /agents", auth(s.agents))
 	mux.Handle("POST /agents/{id}/{action}", auth(s.agentAction))
+	mux.Handle("GET /connectors", auth(s.connectors))
+	mux.Handle("POST /connectors/{id}/revoke", auth(s.revokeConnector))
+	if s.OAuth != nil && s.MCP != nil {
+		// behind OAuth access tokens, not behind the web token
+		s.OAuth.Routes(mux)
+		mux.Handle(oauth.ResourcePath, s.OAuth.Protect(s.MCP))
+	}
 	if s.Agents != nil {
 		// signed by the agent keys, not behind the token
 		mux.Handle("/agent/v1/", s.Agents)

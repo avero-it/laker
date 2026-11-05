@@ -103,6 +103,29 @@ func TestManualScheduleIsValid(t *testing.T) {
 	}
 }
 
+func TestMCPNeedsAnHTTPSPublicURL(t *testing.T) {
+	t.Setenv("LAKER_S3_ACCESS_KEY", "ak")
+	t.Setenv("LAKER_S3_SECRET_KEY", "sk")
+	t.Setenv("LAKER_WEB_TOKEN", "0123456789abcdef")
+	cfg, _ := Parse(Example)
+	cfg.Common.MCP = MCP{Enabled: true, RedirectURIs: []string{"http://localhost/cb"}}
+	err := Validate(cfg, types)
+	for _, code := range []string{"ERR78A", "ERR78B"} {
+		if err == nil || !strings.Contains(err.Error(), code) {
+			t.Errorf("missing %s in: %v", code, err)
+		}
+	}
+	cfg.Common.Web.PublicURL = "http://laker.example.com/sub"
+	if err := Validate(cfg, types); err == nil || !strings.Contains(err.Error(), "ERR788") {
+		t.Errorf("bad publicurl accepted: %v", err)
+	}
+	cfg.Common.Web.PublicURL = "https://laker.example.com"
+	cfg.Common.MCP.RedirectURIs = nil
+	if err := Validate(cfg, types); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAgentDefaultsAreValid(t *testing.T) {
 	cfg, err := ParseAgent(RenderAgent(AgentDefaults(), nil))
 	if err != nil {

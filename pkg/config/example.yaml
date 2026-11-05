@@ -1,5 +1,5 @@
 # Laker configuration. ${VAR} in any value is read from the environment.
-schemaversion: 1
+schemaversion: 2
 
 common:
   id:
@@ -38,6 +38,13 @@ common:
     host: 127.0.0.1              # keep it local; expose it only behind a TLS reverse proxy
     port: 8090
     token: ${LAKER_WEB_TOKEN}    # at least 16 characters
+    publicurl: ""                # https address behind the proxy, e.g. https://laker.example.com
+
+  # read-only MCP at <publicurl>/mcp for Claude connectors, behind OAuth
+  # (each client is approved once with the web token)
+  mcp:
+    enabled: false
+    redirecturis: []             # empty: Claude's callbacks
 
   # laker-agent processes may send data (they wait for approval: laker agents)
   agents:

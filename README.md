@@ -112,6 +112,15 @@ laker-agent serve                   # prints its ID and waits
 laker agents approve lkr-xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx   # or the "Agents" page
 ```
 
+### Using it from Claude
+
+`laker serve` can expose the lake to Claude as a custom connector: read-only MCP at
+`https://<host>/mcp`, behind OAuth. Set `common.web.publicurl` (the https address of the reverse proxy)
+and `common.mcp.enabled: true`, then in Claude: Settings → Connectors → Add custom connector →
+`https://<host>/mcp`, and approve it with the web token on the page that opens. The Connectors page
+of the web UI revokes it. Claude connects from Anthropic's servers, so the host must be reachable over
+public HTTPS. See `docs/SPEC.md` §6.4.
+
 ### Docker, systemd, Kubernetes
 
 `Dockerfile` builds two images: `docker build --target laker -t laker .` and
@@ -123,7 +132,7 @@ derived from the lake and restorable (`laker restore`, or `laker reindex` + `lak
 
 | Command | |
 |---|---|
-| `laker serve [--check]` | scheduler, web UI, agent API |
+| `laker serve [--check]` | scheduler, web UI, agent API, MCP |
 | `laker run <adapter> [--dry-run]` | run once now |
 | `laker search <query>` | full-text search (`from:`, `subject:`, `ext:`, `kind:mail\|file`, Italian stemming) |
 | `laker show <sha>` · `laker get <sha\|source:path> [--at date]` | read a message, download an original |

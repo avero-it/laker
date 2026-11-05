@@ -65,6 +65,10 @@ func buildAdapter(cfg *config.Config, a config.Adapter, lf *logger.Factory) (cor
 
 func statePath(cfg *config.Config) string { return filepath.Join(cfg.Common.DataDir, "state.db") }
 func indexPath(cfg *config.Config) string { return filepath.Join(cfg.Common.DataDir, "index") }
+
+// oauthPath holds the OAuth clients and tokens of MCP: not derived from the
+// lake, so neither snapshotted nor rebuilt.
+func oauthPath(cfg *config.Config) string { return filepath.Join(cfg.Common.DataDir, "oauth.db") }
 func tmpDir(cfg *config.Config) string    { return filepath.Join(cfg.Common.DataDir, "tmp") }
 
 // buildStores opens the state and the index lazily; wait is how long to wait

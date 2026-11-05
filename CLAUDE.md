@@ -29,7 +29,8 @@ intern/core/domain/   rows (MailRow, FileRow), index docs, state keys, lake keys
 intern/core/ports/out Lake, Source + RunSink, Ingest, StateStore, Indexer
 intern/adapters/      lake/{s3,fs}, sources/{imap,fs,sqldb,telegram,whatsapp,chatmedia} (+ registry, stubs, probes), indexer/bleve, state/bbolt,
                       discover (local, read-only detection of sources for laker-agent),
-                      web (UI + /api), agentapi (laker side of /agent/v1), agentclient (agent side)
+                      web (UI + /api), agentapi (laker side of /agent/v1), agentclient (agent side),
+                      mcp (read-only MCP tools at /mcp), oauth (its authorization server, oauth.db)
 intern/coretest/      a real Runner on temp dirs, for tests
 pkg/                  config (viper, strict; laker and agent), logger (+betterstack), signaler, version,
                       parquetx, glob, extract, agentkey (Ed25519 identity, request signatures), redact
@@ -67,6 +68,10 @@ commands that need them (`search`, `show`, `ls`, `list`, `run`, `snapshot`) go t
 `/api/*` when it answers (`cmd/laker/remote.go`), and open the local files otherwise. The web
 pages are `html/template` in `intern/adapters/web/templates`; never mark indexed or mail content
 as `template.HTML` without escaping it first (see `markFragment`, `safeHTML`).
+
+With `common.mcp.enabled`, serve also answers MCP at `<common.web.publicurl>/mcp` behind its own OAuth
+(`docs/SPEC.md` §6.4): the web token approves clients but never opens `/mcp`. MCP tools stay read-only;
+never log their arguments or results.
 
 The sqldb tests need real servers and are skipped otherwise:
 `LAKER_TEST_PG_DSN=postgres://… LAKER_TEST_MYSQL_DSN='user:pw@tcp(host:3306)/' make test`.
@@ -106,6 +111,7 @@ digits, from the package's block:
 | `6xx` | `intern/adapters/agentapi`, `agentclient` |
 | `8xx` | `cmd/laker-agent` |
 | `9xx` | `intern/adapters/discover` |
+| `Axx` | `intern/adapters/oauth` (`A0x`–`A7x`), `intern/adapters/mcp` (`A8x`–`AFx`) |
 | `7xx` | `pkg/*` |
 
 Next free code: `grep -rhoE "ERR3[0-9a-fA-F]{2}" intern/adapters/lake/ | sort -u | tail -1`.

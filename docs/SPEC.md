@@ -293,7 +293,7 @@ Served by `laker serve` (`common.web`):
 
 - search with highlighting and paging; mail reading (text, HTML version, attachments, `.eml` download);
   file browsing now or at a past date with the history of each file; adapter status with "Run now";
-  agents page;
+  agents page; connectors page (§6.4);
 - **access**: a token (≥ 16 characters) asked once, then an `HttpOnly`, `SameSite=Strict` cookie; POSTs must
   come from the same site; default bind `127.0.0.1`, exposed only behind a TLS reverse proxy;
 - **mail HTML**: `cid:` images become `data:` URIs, remote images are blocked until asked for (they track
@@ -304,7 +304,37 @@ Served by `laker serve` (`common.web`):
 - with the web UI enabled, `serve` keeps the state and index open; the CLI commands that need them go
   through its JSON API (`/api/*`, `Authorization: Bearer <token>`).
 
-### 6.4 Why Parquet and not Iceberg
+### 6.4 MCP for Claude connectors
+
+With `common.mcp.enabled`, `serve` also answers MCP (Streamable HTTP, stateless, JSON responses) at
+`<common.web.publicurl>/mcp`, so a Claude custom connector (claude.ai, desktop, mobile, and the dashboards
+that call connectors) can read the lake. It runs on the stores the web UI already holds open.
+
+- **read-only tools**: `search`, `get_document`, `list_files` (now or at a date), `file_history`, `read_file`
+  (extracted text), `status`; no run, no write, no agent action. Long text is cut at 60,000 characters
+  (Claude takes about 150,000 per result, which carries the output twice). No SQL over Parquet yet: DuckDB
+  needs cgo.
+- **OAuth 2.1, Laker as its own authorization server** (`intern/adapters/oauth`): protected resource
+  metadata (RFC 9728, also announced in the `WWW-Authenticate` of every 401), authorization server metadata
+  (RFC 8414), dynamic client registration (RFC 7591), authorization code with PKCE `S256` only, the
+  `resource` of RFC 8707 checked against `/mcp`, `iss` in the redirect (RFC 9207), revocation (RFC 7009).
+- **who gets in**: anyone may register a client, but only with a redirect URI of `common.mcp.redirecturis`
+  (default Claude's, `https://claude.ai/api/mcp/auth_callback`); nothing is granted until the owner approves
+  it on the consent page by typing the web token (failures wait 1 s and are rate-limited). The web token
+  itself never opens `/mcp`.
+- **tokens**: opaque, 32 random bytes; access 1 hour, refresh 60 days and rotated at every use; only
+  their SHA-256 is stored, in `datadir/oauth.db`. That file is not derived from the lake, so it is neither
+  in the snapshots nor touched by `state rebuild`: losing it only means approving the clients again.
+  The Connectors page lists the clients and revokes them (with every token they hold).
+- **network**: Claude calls from Anthropic's servers (`160.79.104.0/21`), never from the user's device, so
+  the listener must be reachable over public HTTPS behind the reverse proxy (TLS there); restricting
+  `/mcp`, `/oauth/` and `/.well-known/` to that range at the proxy is a sensible extra.
+- **what leaves**: whatever a tool returns (mail bodies included) goes to Claude, as any connector's data.
+
+To connect: Claude → Settings → Connectors → Add custom connector → `https://<host>/mcp`, then approve
+on the page that opens.
+
+### 6.5 Why Parquet and not Iceberg
 
 The lake is append-only and small, so Iceberg's strengths (row deletes, MERGE, safe compaction, planning
 over millions of files) are not needed; time travel already comes from the changelogs. The files are ready
@@ -320,7 +350,7 @@ error), `${VAR}` in any value is read from the environment, `laker config valida
 at once. `laker config create` writes a commented example.
 
 ```yaml
-schemaversion: 1
+schemaversion: 2
 common:
   id: { name: laker }
   timezone: Europe/Rome
@@ -338,7 +368,8 @@ common:
       conditionalput: true
     fs: { path: ./lake }
   snapshot: { schedule: "0 30 4 * * *" }
-  web: { enabled: true, host: 127.0.0.1, port: 8090, token: ${LAKER_WEB_TOKEN} }
+  web: { enabled: true, host: 127.0.0.1, port: 8090, token: ${LAKER_WEB_TOKEN}, publicurl: https://laker.example.com }
+  mcp: { enabled: false, redirecturis: [] }   # §6.4; empty: Claude's callback
   agents: { enabled: false }
   defaults: { timeout: 2h, commitevery: 500 }
 
@@ -397,6 +428,7 @@ prints `LAKER_CHECK_RESULT {json}`, writing nothing.
 | **M2** ✅ | `postgres`, `mysql` (snapshot + diff); text extraction; `laker views` |
 | **M3** ✅ | web UI in `serve`; CLI through its API |
 | **M4** ✅ | `laker` as an always-on service fed by `laker-agent` (§11) |
+| **M5** | read-only MCP behind OAuth for Claude connectors (§6.4) |
 | later, if needed | IMAP deletions/flags, text of mail attachments, search over database rows, CDC, Iceberg, more sources |
 
 ---

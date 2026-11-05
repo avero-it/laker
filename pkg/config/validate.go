@@ -79,6 +79,24 @@ func Validate(cfg *Config, knownTypes map[string]bool) error {
 			e.add(fmt.Errorf("ERR726: common.web.host is required"))
 		}
 	}
+	if c.Web.PublicURL != "" {
+		if u, err := url.Parse(c.Web.PublicURL); err != nil || u.Scheme != "https" || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
+			e.add(fmt.Errorf("ERR788: common.web.publicurl %q must be an https URL with no path, e.g. https://laker.example.com", c.Web.PublicURL))
+		}
+	}
+	if c.MCP.Enabled {
+		if !c.Web.Enabled {
+			e.add(fmt.Errorf("ERR789: common.mcp needs common.web: MCP is served by its listener"))
+		}
+		if c.Web.PublicURL == "" {
+			e.add(fmt.Errorf("ERR78A: common.mcp needs common.web.publicurl: OAuth clients reach Laker at that address"))
+		}
+		for _, r := range c.MCP.RedirectURIs {
+			if u, err := url.Parse(r); err != nil || u.Scheme != "https" || u.Host == "" || u.Fragment != "" {
+				e.add(fmt.Errorf("ERR78B: common.mcp.redirecturis: %q must be an absolute https URL", r))
+			}
+		}
+	}
 	if c.Agents.Enabled && !c.Web.Enabled {
 		e.add(fmt.Errorf("ERR727: common.agents needs common.web: the agents send their data to its listener"))
 	}
