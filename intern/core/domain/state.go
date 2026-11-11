@@ -61,6 +61,15 @@ func contains(s []string, v string) bool {
 const (
 	BucketMailLocations = "_mailloc"
 	BucketRuns          = "_runs"
+	BucketMeta          = "_meta"
+)
+
+// Keys of BucketMeta.
+const (
+	// MetaLakeChange names the last commit that reached the lake.
+	MetaLakeChange = "lake_change"
+	// MetaSnapshotOf is the MetaLakeChange the last snapshot was taken at.
+	MetaSnapshotOf = "snapshot_of"
 )
 
 // SourceBucket is the private state bucket of an adapter.

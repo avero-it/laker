@@ -45,8 +45,9 @@ func (l *LocalIngest) PutBlob(ctx context.Context, sha string, size int64, r io.
 	return l.Lake.PutIfAbsent(ctx, key, r, size)
 }
 
-// Commit writes the files, then the manifest, then the index. Every step is
-// idempotent: a commit sent twice changes nothing the second time.
+// Commit writes the files, then the manifest, then the index, and notes in
+// the state that the lake has changed. Every step is idempotent: a commit
+// sent twice changes nothing the second time.
 func (l *LocalIngest) Commit(ctx context.Context, c domain.Commit) error {
 	if c.Empty() {
 		return nil
@@ -67,9 +68,6 @@ func (l *LocalIngest) Commit(ctx context.Context, c domain.Commit) error {
 		if _, err := l.Lake.PutIfAbsent(ctx, name, bytes.NewReader(b), int64(len(b))); err != nil {
 			return fmt.Errorf("ERR107: cannot write the manifest %s: %w", name, err)
 		}
-	}
-	if len(c.Mail) == 0 && len(c.FileDocs) == 0 && len(c.ChatDocs) == 0 && len(c.Unindex) == 0 {
-		return nil
 	}
 
 	state, index, release, err := l.Stores.Acquire()
@@ -115,11 +113,16 @@ func (l *LocalIngest) Commit(ctx context.Context, c domain.Commit) error {
 	for _, id := range c.Unindex {
 		delete(docs, id)
 	}
-	if err := index.Apply(ctx, docs, c.Unindex); err != nil {
-		return err
+	if len(docs) > 0 || len(c.Unindex) > 0 {
+		if err := index.Apply(ctx, docs, c.Unindex); err != nil {
+			return err
+		}
 	}
+	// the lake has changed: the next snapshot is due
+	changes = append(changes, out.StateChange{Bucket: domain.BucketMeta, Key: domain.MetaLakeChange,
+		Value: []byte(fmt.Sprintf("%s-%04d", c.Run, c.Seq))})
 	if err := state.Apply(changes); err != nil {
-		return fmt.Errorf("ERR10B: cannot save the mail locations: %w", err)
+		return fmt.Errorf("ERR10B: cannot save the state of the commit: %w", err)
 	}
 	return nil
 }

@@ -53,6 +53,18 @@ func commandReindex(configPath string) {
 		fatalf("ERR074: reindex failed: %v", err)
 	}
 	lg.Info().Int("mails", mails).Int("files", files).Msg("INF070: index rebuilt from the lake")
+
+	// the new index is not in any snapshot yet, though the lake has not changed
+	if _, err := os.Stat(statePath(cfg)); err == nil {
+		st, err := bbolt.Open(statePath(cfg), cliWait)
+		if err == nil {
+			err = core.SnapshotDue(st)
+			st.Close()
+		}
+		if err != nil {
+			lg.Warn().Msgf("WRN003: the next snapshot may be skipped, run laker snapshot after the next ingest: %v", err)
+		}
+	}
 }
 
 func commandStateRebuild(configPath string, force bool) {
@@ -61,18 +73,18 @@ func commandStateRebuild(configPath string, force bool) {
 	defer lf.Close()
 	lg := lf.For("STATE", color.New(color.FgHiBlack).SprintFunc())
 
+	exists := false
 	if _, err := os.Stat(statePath(cfg)); err == nil {
 		if !force {
 			fatalf("ERR075: %s exists; use --force to replace it", statePath(cfg))
 		}
+		// no other process may hold the state that is about to be replaced
 		st, err := bbolt.Open(statePath(cfg), cliWait)
 		if err != nil {
 			fatalf("ERR076: %v", err)
 		}
 		st.Close()
-		if err := os.Remove(statePath(cfg)); err != nil {
-			fatalf("ERR077: %v", err)
-		}
+		exists = true
 	}
 	if err := os.MkdirAll(cfg.Common.DataDir, 0o750); err != nil {
 		fatalf("ERR078: %v", err)
@@ -82,16 +94,29 @@ func commandStateRebuild(configPath string, force bool) {
 	if err != nil {
 		fatalf("ERR079: %v", err)
 	}
-	st, err := bbolt.Open(statePath(cfg), cliWait)
+	// the rebuild writes in several transactions: it goes into a scratch file
+	// that becomes the state only when complete, so a rebuild that fails
+	// leaves the previous state (or none) in place
+	scratch := statePath(cfg) + ".rebuild"
+	if err := os.Remove(scratch); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		fatalf("ERR077: %v", err)
+	}
+	st, err := bbolt.Open(scratch, cliWait)
 	if err != nil {
 		fatalf("ERR07A: %v", err)
 	}
-	defer st.Close()
 	n, err := core.RebuildState(context.Background(), lake, st)
+	if cerr := st.Close(); err == nil {
+		err = cerr
+	}
 	if err != nil {
+		os.Remove(scratch) // local scratch file, not the lake
 		fatalf("ERR07B: %v", err)
 	}
-	lg.Info().Int("keys", n).Msg("INF071: state rebuilt from the lake")
+	if err := os.Rename(scratch, statePath(cfg)); err != nil {
+		fatalf("ERR081: cannot put the rebuilt state in place: %v", err)
+	}
+	lg.Info().Int("changes", n).Bool("replaced", exists).Msg("INF071: state rebuilt from the lake")
 }
 
 func commandSnapshot(configPath string) {

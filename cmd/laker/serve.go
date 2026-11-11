@@ -286,7 +286,7 @@ func commandList(configPath string) {
 }
 
 // snapshot copies the state and index to the lake, holding the stores while
-// it does.
+// it does, unless nothing reached the lake since the last one.
 func snapshot(ctx context.Context, cfg *config.Config, lake out.Lake, stores *core.Stores, lg zerolog.Logger) error {
 	state, index, release, err := stores.Acquire()
 	if err != nil {
@@ -297,7 +297,7 @@ func snapshot(ctx context.Context, cfg *config.Config, lake out.Lake, stores *co
 		return fmt.Errorf("ERR045: %w", err)
 	}
 	run := domain.Run{ID: ulid.Make().String(), Adapter: "snapshot", Type: "snapshot", StartedAt: time.Now(), Status: domain.RunOK}
-	keys, err := core.Snapshot(ctx, lake, state, index, tmpDir(cfg), run.StartedAt)
+	keys, skipped, err := core.SnapshotIfChanged(ctx, lake, state, index, tmpDir(cfg), run.StartedAt)
 	run.EndedAt, run.Stats.Files = time.Now(), len(keys)
 	if err != nil {
 		run.Status, run.Error = domain.RunFailed, err.Error()
@@ -308,6 +308,10 @@ func snapshot(ctx context.Context, cfg *config.Config, lake out.Lake, stores *co
 	}
 	if err != nil {
 		return err
+	}
+	if skipped {
+		lg.Info().Msg("INF009: nothing reached the lake since the last snapshot, none taken")
+		return nil
 	}
 	lg.Info().Strs("keys", keys).Msg("INF007: snapshot stored in the lake")
 	return nil

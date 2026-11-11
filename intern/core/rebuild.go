@@ -3,8 +3,7 @@ package core
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strings"
+	"time"
 
 	"github.com/rs/zerolog"
 
@@ -12,13 +11,75 @@ import (
 	"github.com/avero-it/laker/intern/core/ports/out"
 )
 
-const rebuildBatch = 500
+// The rebuilds read the whole lake, so they keep in memory only what must be
+// compared across files (where each message is, the latest trees, the live
+// rows of the databases) and write everything else as they read it.
+const (
+	rebuildBatch      = 500      // index documents in one batch
+	rebuildBatchBytes = 32 << 20 // or this much text, whichever comes first
+)
+
+// stateBatch is how many state changes one transaction of a rebuild holds. A
+// var for the tests.
+var stateBatch = 10000
+
+// indexBatch collects index documents and flushes them by count or by size.
+type indexBatch struct {
+	index out.Indexer
+	docs  map[string]any
+	bytes int
+}
+
+func (b *indexBatch) add(ctx context.Context, id string, doc any, size int) error {
+	if b.docs == nil {
+		b.docs = map[string]any{}
+	}
+	b.docs[id] = doc
+	b.bytes += size
+	if len(b.docs) >= rebuildBatch || b.bytes >= rebuildBatchBytes {
+		return b.flush(ctx)
+	}
+	return nil
+}
+
+func (b *indexBatch) flush(ctx context.Context) error {
+	if err := b.index.Apply(ctx, b.docs, nil); err != nil {
+		return err
+	}
+	b.docs, b.bytes = nil, 0
+	return nil
+}
+
+// stateWriter applies state changes in transactions of stateBatch.
+type stateWriter struct {
+	state   out.StateStore
+	pending []out.StateChange
+	n       int
+}
+
+func (w *stateWriter) put(bucket, key string, value []byte) error {
+	w.pending = append(w.pending, out.StateChange{Bucket: bucket, Key: key, Value: value})
+	if len(w.pending) >= stateBatch {
+		return w.flush()
+	}
+	return nil
+}
+
+func (w *stateWriter) flush() error {
+	if err := w.state.Apply(w.pending); err != nil {
+		return fmt.Errorf("ERR112: cannot write the rebuilt state: %w", err)
+	}
+	w.n += len(w.pending)
+	w.pending = w.pending[:0]
+	return nil
+}
 
 // Reindex fills an empty index from the lake: every message once, with all its
 // places, and every file present in the latest tree of its source.
 func Reindex(ctx context.Context, lake out.Lake, index out.Indexer, lg zerolog.Logger) (mails, files int, err error) {
+	// first where every message is, without its text
 	locs := map[string]*domain.MailLocations{}
-	err = EachMail(ctx, lake, func(r domain.MailRow) error {
+	err = eachMailRef(ctx, lake, func(r mailRef) error {
 		if r.SHA256 == "" {
 			return nil // not stored (too large), nothing to index
 		}
@@ -34,31 +95,21 @@ func Reindex(ctx context.Context, lake out.Lake, index out.Indexer, lg zerolog.L
 		return 0, 0, err
 	}
 
-	batch := map[string]any{}
-	flush := func() error {
-		if err := index.Apply(ctx, batch, nil); err != nil {
-			return err
-		}
-		batch = map[string]any{}
-		return nil
-	}
-
-	done := map[string]bool{}
+	batch := &indexBatch{index: index}
 	err = EachMail(ctx, lake, func(r domain.MailRow) error {
-		if r.SHA256 == "" || done[r.SHA256] {
-			return nil
+		l, ok := locs[r.SHA256]
+		if !ok {
+			return nil // not stored, or indexed already from another place
 		}
-		done[r.SHA256] = true
-		batch[domain.MailDocID(r.SHA256)] = domain.NewMailDoc(r, *locs[r.SHA256])
+		delete(locs, r.SHA256)
 		mails++
-		if len(batch) >= rebuildBatch {
+		if mails%(10*rebuildBatch) == 0 {
 			lg.Debug().Int("mails", mails).Msg("DBG110: reindexing")
-			return flush()
 		}
-		return nil
+		return batch.add(ctx, domain.MailDocID(r.SHA256), domain.NewMailDoc(r, *l), len(r.BodyText))
 	})
 	if err == nil {
-		err = flush()
+		err = batch.flush(ctx)
 	}
 	if err != nil {
 		return mails, 0, err
@@ -82,14 +133,14 @@ func Reindex(ctx context.Context, lake out.Lake, index out.Indexer, lg zerolog.L
 		for _, e := range tree {
 			r := ref{source, e}
 			bySHA[e.SHA256] = append(bySHA[e.SHA256], r)
-			batch[domain.FileDocID(source, e.Path)] = fileDoc(r)
 			files++
-			if len(batch) >= rebuildBatch {
-				if err := flush(); err != nil {
-					return mails, files, err
-				}
+			if err := batch.add(ctx, domain.FileDocID(source, e.Path), fileDoc(r), 0); err != nil {
+				return mails, files, err
 			}
 		}
+	}
+	if err := batch.flush(ctx); err != nil {
+		return mails, files, err
 	}
 	err = EachText(ctx, lake, func(t domain.TextRow) error {
 		if t.Text == "" {
@@ -101,11 +152,8 @@ func Reindex(ctx context.Context, lake out.Lake, index out.Indexer, lg zerolog.L
 			}
 			doc := fileDoc(r)
 			doc.Content = t.Text
-			batch[domain.FileDocID(r.source, r.entry.Path)] = doc
-			if len(batch) >= rebuildBatch {
-				if err := flush(); err != nil {
-					return err
-				}
+			if err := batch.add(ctx, domain.FileDocID(r.source, r.entry.Path), doc, len(t.Text)); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -116,21 +164,22 @@ func Reindex(ctx context.Context, lake out.Lake, index out.Indexer, lg zerolog.L
 	// chat messages: the last row of each message wins (an edit after the original)
 	err = EachChat(ctx, lake, func(r domain.ChatRow) error {
 		doc := domain.NewChatDoc(r)
-		batch[doc.ID()] = doc
-		if len(batch) >= rebuildBatch {
-			return flush()
-		}
-		return nil
+		return batch.add(ctx, doc.ID(), doc, len(r.Text))
 	})
 	if err != nil {
 		return mails, files, err
 	}
-	return mails, files, flush()
+	return mails, files, batch.flush(ctx)
 }
 
 // RebuildState writes back into an empty state what the sources need to
-// resume: IMAP checkpoints, mail locations and file inventories.
+// resume: IMAP checkpoints, mail locations, file inventories, database row
+// hashes and chat checkpoints. It returns how many changes it wrote, in
+// several transactions: on an error the state is incomplete and must not be
+// used.
 func RebuildState(ctx context.Context, lake out.Lake, state out.StateStore) (int, error) {
+	w := &stateWriter{state: state}
+
 	// per folder and UIDVALIDITY: highest UID and last time seen; the
 	// UIDVALIDITY seen last is the current one
 	type folderKey struct{ account, folder string }
@@ -138,7 +187,7 @@ func RebuildState(ctx context.Context, lake out.Lake, state out.StateStore) (int
 	folders := map[folderKey]map[int64]*validity{}
 	locs := map[string]*domain.MailLocations{}
 
-	err := EachMail(ctx, lake, func(r domain.MailRow) error {
+	err := eachMailRef(ctx, lake, func(r mailRef) error {
 		if r.SHA256 != "" {
 			l, ok := locs[r.SHA256]
 			if !ok {
@@ -165,7 +214,6 @@ func RebuildState(ctx context.Context, lake out.Lake, state out.StateStore) (int
 		return 0, err
 	}
 
-	var changes []out.StateChange
 	for k, vals := range folders {
 		var cur domain.FolderState
 		var curSeen int64 = -1
@@ -174,42 +222,49 @@ func RebuildState(ctx context.Context, lake out.Lake, state out.StateStore) (int
 				cur, curSeen = domain.FolderState{UIDValidity: uv, LastUID: v.lastUID}, v.lastSeen
 			}
 		}
-		changes = append(changes, out.StateChange{
-			Bucket: domain.SourceBucket(k.account), Key: domain.FolderStateKey(k.folder), Value: domain.MustJSON(cur),
-		})
+		if err := w.put(domain.SourceBucket(k.account), domain.FolderStateKey(k.folder), domain.MustJSON(cur)); err != nil {
+			return w.n, err
+		}
 	}
 	for sha, l := range locs {
-		changes = append(changes, out.StateChange{Bucket: domain.BucketMailLocations, Key: sha, Value: domain.MustJSON(l)})
+		if err := w.put(domain.BucketMailLocations, sha, domain.MustJSON(l)); err != nil {
+			return w.n, err
+		}
 	}
+	folders, locs = nil, nil
 
 	trees, err := TreeAt(ctx, lake, "", zeroTime)
 	if err != nil {
-		return 0, err
+		return w.n, err
 	}
 	for source, tree := range trees {
 		for _, e := range tree {
-			changes = append(changes, out.StateChange{
-				Bucket: domain.SourceBucket(source), Key: domain.InventoryKey(e.Path),
-				Value: domain.MustJSON(domain.InventoryEntry{Size: e.Size, MtimeNano: e.Mtime.UnixNano(), SHA256: e.SHA256}),
-			})
+			v := domain.MustJSON(domain.InventoryEntry{Size: e.Size, MtimeNano: e.Mtime.UnixNano(), SHA256: e.SHA256})
+			if err := w.put(domain.SourceBucket(source), domain.InventoryKey(e.Path), v); err != nil {
+				return w.n, err
+			}
 		}
 	}
+	trees = nil
 
 	rows, err := lastDBRows(ctx, lake)
 	if err != nil {
-		return 0, err
+		return w.n, err
 	}
 	for k, hash := range rows {
-		changes = append(changes, out.StateChange{Bucket: domain.SourceBucket(k.source), Key: domain.RowStateKey(k.table, k.pk), Value: []byte(hash)})
+		if err := w.put(domain.SourceBucket(k.source), domain.RowStateKey(k.table, k.pk), []byte(hash)); err != nil {
+			return w.n, err
+		}
 	}
+	rows = nil
 
 	chats := map[[2]string]*domain.ChatState{}
-	lastMsg := map[[2]string]domain.ChatRow{}
 	err = EachChat(ctx, lake, func(r domain.ChatRow) error {
 		if r.Service == "whatsapp" {
-			// the last version of each message, as the source keeps it
-			lastMsg[[2]string{r.Source, domain.ChatMsgStateKey(r.Chat(), r.Msg())}] = r
-			return nil
+			// the last version of each message, as the source keeps it: the
+			// rows come in the order they were seen, so the last one written
+			// to a key is the last version
+			return w.put(domain.SourceBucket(r.Source), domain.ChatMsgStateKey(r.Chat(), r.Msg()), domain.MustJSON(r))
 		}
 		k := [2]string{r.Source, domain.ChatStateKey(r.ChatID)}
 		st := chats[k]
@@ -226,75 +281,50 @@ func RebuildState(ctx context.Context, lake out.Lake, state out.StateStore) (int
 		return nil
 	})
 	if err != nil {
-		return 0, err
+		return w.n, err
 	}
 	for k, st := range chats {
-		changes = append(changes, out.StateChange{Bucket: domain.SourceBucket(k[0]), Key: k[1], Value: domain.MustJSON(st)})
-	}
-	for k, r := range lastMsg {
-		changes = append(changes, out.StateChange{Bucket: domain.SourceBucket(k[0]), Key: k[1], Value: domain.MustJSON(r)})
+		if err := w.put(domain.SourceBucket(k[0]), k[1], domain.MustJSON(st)); err != nil {
+			return w.n, err
+		}
 	}
 
-	err = EachText(ctx, lake, func(t domain.TextRow) error {
-		changes = append(changes, out.StateChange{Bucket: domain.SourceBucket(t.Source), Key: domain.TextStateKey(t.SHA256), Value: []byte{1}})
-		return nil
+	err = eachTextRef(ctx, lake, func(t textRef) error {
+		return w.put(domain.SourceBucket(t.Source), domain.TextStateKey(t.SHA256), []byte{1})
 	})
 	if err != nil {
-		return 0, err
+		return w.n, err
 	}
-
-	if err := state.Apply(changes); err != nil {
-		return 0, fmt.Errorf("ERR112: cannot write the rebuilt state: %w", err)
-	}
-	return len(changes), nil
+	return w.n, w.flush()
 }
 
 type dbRowKey struct{ source, table, pk string }
 
-// lastDBRows replays the database changelogs: the hash of every row present
-// after the last run.
+// lastDBRows replays the database changelogs in the order they were written:
+// the hash of every row present after the last run.
 func lastDBRows(ctx context.Context, lake out.Lake) (map[dbRowKey]string, error) {
-	type change struct {
-		domain.DBMeta
-		source, table string
-	}
-	var all []change
-	var keys []string
-	err := lake.List(ctx, "db/", func(k string) error {
-		if strings.HasSuffix(k, ".parquet") {
-			keys = append(keys, k)
-		}
-		return nil
-	})
+	keys, err := parquetKeys(ctx, lake, "db/", nil)
 	if err != nil {
 		return nil, err
 	}
-	for _, k := range keys {
-		source, table, ok := domain.DBTableOf(k)
+	last := map[dbRowKey]string{}
+	seen := func(m domain.DBMeta) time.Time { return m.SeenAt }
+	for _, key := range keys {
+		source, table, ok := domain.DBTableOf(key)
 		if !ok {
 			continue
 		}
-		metas, err := readParquet[domain.DBMeta](ctx, lake, k)
+		err := eachRow(ctx, lake, []string{key}, seen, func(m domain.DBMeta) error {
+			k := dbRowKey{source, table, m.PK}
+			if m.Op == domain.DBDelete {
+				delete(last, k)
+			} else {
+				last[k] = m.RowHash
+			}
+			return nil
+		})
 		if err != nil {
 			return nil, err
-		}
-		for _, m := range metas {
-			all = append(all, change{m, source, table})
-		}
-	}
-	sort.SliceStable(all, func(i, j int) bool {
-		if !all[i].SeenAt.Equal(all[j].SeenAt) {
-			return all[i].SeenAt.Before(all[j].SeenAt)
-		}
-		return all[i].RunID < all[j].RunID
-	})
-	last := map[dbRowKey]string{}
-	for _, c := range all {
-		k := dbRowKey{c.source, c.table, c.PK}
-		if c.Op == domain.DBDelete {
-			delete(last, k)
-		} else {
-			last[k] = c.RowHash
 		}
 	}
 	return last, nil

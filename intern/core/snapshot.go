@@ -2,6 +2,7 @@ package core
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 )
 
@@ -66,6 +68,39 @@ func Snapshot(ctx context.Context, lake out.Lake, state out.StateStore, index ou
 		keys = append(keys, key)
 	}
 	return keys, nil
+}
+
+// SnapshotIfChanged is Snapshot, skipped when no commit reached the lake
+// since the last one: a snapshot can never be removed from the lake, so an
+// identical one is only a cost. Checkpoints and run records alone do not
+// count as a change: a run that found nothing new is not worth a snapshot.
+func SnapshotIfChanged(ctx context.Context, lake out.Lake, state out.StateStore, index out.Indexer, tmp string, now time.Time) (keys []string, skipped bool, err error) {
+	// read before copying: a commit landing meanwhile is for the next one
+	change, err := state.Get(domain.BucketMeta, domain.MetaLakeChange)
+	if err != nil {
+		return nil, false, fmt.Errorf("ERR132: %w", err)
+	}
+	mark := append([]byte("at:"), change...) // never empty, also before the first commit
+	of, err := state.Get(domain.BucketMeta, domain.MetaSnapshotOf)
+	if err != nil {
+		return nil, false, fmt.Errorf("ERR133: %w", err)
+	}
+	if bytes.Equal(of, mark) {
+		return nil, true, nil
+	}
+	if keys, err = Snapshot(ctx, lake, state, index, tmp, now); err != nil {
+		return keys, false, err
+	}
+	if err := state.Apply([]out.StateChange{{Bucket: domain.BucketMeta, Key: domain.MetaSnapshotOf, Value: mark}}); err != nil {
+		return keys, false, fmt.Errorf("ERR134: cannot record the snapshot: %w", err)
+	}
+	return keys, false, nil
+}
+
+// SnapshotDue makes the next SnapshotIfChanged take a snapshot whatever the
+// lake says: for when the derived data was rebuilt, not ingested.
+func SnapshotDue(state out.StateStore) error {
+	return state.Apply([]out.StateChange{{Bucket: domain.BucketMeta, Key: domain.MetaSnapshotOf}})
 }
 
 // Restore downloads the latest snapshots into statePath and indexDir, which

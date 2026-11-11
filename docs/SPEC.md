@@ -415,7 +415,14 @@ prints `LAKER_CHECK_RESULT {json}`, writing nothing.
 2. **No client-side encryption**: the bucket stays directly readable.
 3. **Derived data is snapshotted to the bucket too**: periodic, append-only snapshots of the index
    (`_index/`) and of the state (`_state/`); `laker restore` fills an empty data directory from the latest.
-4. **English only** in the repository.
+   A snapshot stays in the bucket for ever, so one is taken only if a commit reached the lake since the
+   last (or after `laker reindex`); checkpoints and run records alone do not count.
+4. **The rebuilds are bounded in memory**: `laker reindex` and `laker state rebuild` read the Parquet files
+   one at a time, in the order the runs wrote them (`<run>-<seq>`: run ids are time-ordered and the runs of
+   a source never overlap), and write in batches. They keep only what must be compared across files: where
+   each message is, the latest tree of each source, the live rows of each database table. `state rebuild`
+   writes into a scratch file that replaces the state only when complete.
+5. **English only** in the repository.
 
 ---
 
