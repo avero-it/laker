@@ -28,7 +28,13 @@ import (
 )
 
 // MaxCommit caps the body of a commit: its parquet files and documents.
+// Agents cut their commits into much smaller pieces (agentclient.MaxPart);
+// the cap is this high for the agents that do not yet.
 const MaxCommit = 1 << 30
+
+// commitSlots is how many POST bodies are held in memory at once: the others
+// wait, so several agents committing together do not add up.
+const commitSlots = 2
 
 // Hello is what an agent sends to present itself.
 type Hello struct {
@@ -54,14 +60,15 @@ type Deps struct {
 
 type API struct {
 	Deps
-	mu sync.Mutex // serializes the registry writes (hello, claim, touch)
+	mu    sync.Mutex    // serializes the registry writes (hello, claim, touch)
+	slots chan struct{} // see commitSlots
 }
 
 func New(d Deps) *API {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &API{Deps: d}
+	return &API{Deps: d, slots: make(chan struct{}, commitSlots)}
 }
 
 // Handler serves /agent/v1/.
@@ -182,6 +189,12 @@ func (a *API) approved(next func(http.ResponseWriter, *http.Request, domain.Agen
 				return
 			}
 		} else if r.Method == http.MethodPost {
+			select {
+			case a.slots <- struct{}{}:
+				defer func() { <-a.slots }()
+			case <-r.Context().Done():
+				return // the agent went away while waiting
+			}
 			body, sha, err := readBody(r, MaxCommit)
 			if err != nil {
 				a.refuse(w, r, http.StatusRequestEntityTooLarge, err)

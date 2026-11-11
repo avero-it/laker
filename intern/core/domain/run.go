@@ -1,6 +1,9 @@
 package domain
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 type RunStatus string
 
@@ -33,11 +36,21 @@ type RunStats struct {
 	Commits    int   `json:"commits"`
 }
 
+// ManifestKey is where the manifest of a commit goes; a commit sent in
+// pieces has one for each piece after the first, <run>-<seq>-p<part>.json.
+func ManifestKey(adapter, run string, seq, part int) string {
+	if part > 0 {
+		return fmt.Sprintf("_runs/%s/%s-%04d-p%03d.json", adapter, run, seq, part)
+	}
+	return fmt.Sprintf("_runs/%s/%s-%04d.json", adapter, run, seq)
+}
+
 // Manifest is written to _runs/<adapter>/<run>-<seq>.json at every commit:
 // what the commit added to the lake.
 type Manifest struct {
 	Run        string    `json:"run"`
 	Seq        int       `json:"seq"`
+	Part       int       `json:"part,omitempty"`
 	Adapter    string    `json:"adapter"`
 	Type       string    `json:"type"`
 	At         time.Time `json:"at"`

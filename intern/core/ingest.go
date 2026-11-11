@@ -53,7 +53,7 @@ func (l *LocalIngest) Commit(ctx context.Context, c domain.Commit) error {
 		return nil
 	}
 	man := domain.Manifest{
-		Run: c.Run, Seq: c.Seq, Adapter: c.Adapter, Type: c.Type, At: l.now(),
+		Run: c.Run, Seq: c.Seq, Part: c.Part, Adapter: c.Adapter, Type: c.Type, At: l.now(),
 		BlobsNew: c.BlobsNew, BlobsDedup: c.BlobsDedup, Bytes: c.Bytes,
 	}
 	for _, f := range c.Files {
@@ -64,7 +64,7 @@ func (l *LocalIngest) Commit(ctx context.Context, c domain.Commit) error {
 	}
 	if len(man.Files) > 0 || man.BlobsNew > 0 {
 		b, _ := json.MarshalIndent(man, "", "  ")
-		name := fmt.Sprintf("_runs/%s/%s-%04d.json", c.Adapter, c.Run, c.Seq)
+		name := domain.ManifestKey(c.Adapter, c.Run, c.Seq, c.Part)
 		if _, err := l.Lake.PutIfAbsent(ctx, name, bytes.NewReader(b), int64(len(b))); err != nil {
 			return fmt.Errorf("ERR107: cannot write the manifest %s: %w", name, err)
 		}

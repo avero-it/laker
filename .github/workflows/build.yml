@@ -9,6 +9,22 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    # throwaway servers for the sqldb tests, which are skipped without them
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: laker-ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+      mariadb:
+        image: mariadb:11
+        env:
+          MARIADB_ROOT_PASSWORD: laker-ci
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized" --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -17,6 +33,17 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go test ./...
+        env:
+          LAKER_TEST_PG_DSN: postgres://postgres:laker-ci@127.0.0.1:5432/postgres?sslmode=disable
+          LAKER_TEST_MYSQL_DSN: root:laker-ci@tcp(127.0.0.1:3306)/
+      # a skipped database test would let the changelog code rot unnoticed
+      - name: The database tests really ran
+        run: |
+          go test -count=1 -v -run TestHistory ./intern/adapters/sources/sqldb/ | tee /tmp/sqldb.log
+          ! grep -q -- "--- SKIP" /tmp/sqldb.log
+        env:
+          LAKER_TEST_PG_DSN: postgres://postgres:laker-ci@127.0.0.1:5432/postgres?sslmode=disable
+          LAKER_TEST_MYSQL_DSN: root:laker-ci@tcp(127.0.0.1:3306)/
       # packages and archives are built by the Release workflow; here only prove they still build
       - name: Cross-compile
         run: |

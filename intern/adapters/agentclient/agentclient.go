@@ -171,8 +171,20 @@ func (c *Client) PutBlob(ctx context.Context, sha string, size int64, r io.Reade
 	return res.Created, err
 }
 
+// MaxPart is about how large a commit request may be: a larger commit is
+// sent in pieces, so neither side holds much more than this for one request.
+// A var for the tests.
+var MaxPart = 32 << 20
+
+// Commit sends the commit, in pieces if it is large. Each piece is a commit
+// of its own and idempotent: after a failure the next run sends them again.
 func (c *Client) Commit(ctx context.Context, cm domain.Commit) error {
-	return c.postJSON(ctx, "/agent/v1/commit", cm, nil)
+	for _, part := range cm.Split(MaxPart) {
+		if err := c.postJSON(ctx, "/agent/v1/commit", part, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Finish sends the run record, with any credential its error quotes removed:

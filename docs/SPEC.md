@@ -142,7 +142,7 @@ s3://<bucket>/
 ├── files/text/source=<s>/dt=YYYY-MM-DD/<run>-<seq>.parquet      # text extracted from documents
 ├── chat/messages/source=<s>/month=YYYY-MM/<run>-<seq>.parquet    # Telegram and WhatsApp messages
 ├── db/<source>/<schema>.<table>/changes/dt=YYYY-MM-DD/<run>-<seq>.parquet
-├── _runs/<adapter>/<run>-<seq>.json                               # manifest: files written, counts
+├── _runs/<adapter>/<run>-<seq>[-p<part>].json                     # manifest: files written, counts
 ├── _index/<ts>.tar.gz                                             # snapshot of the Bleve index
 └── _state/<ts>.db                                                 # snapshot of the bbolt state
 ```
@@ -468,6 +468,12 @@ laker, which reaches nothing itself: the agents connect out to it. Advantages:
 Every operation is idempotent (blobs by hash, files by run ID): a repeated request changes nothing, so the
 client retries network errors and 5xx answers, never refusals.
 
+A commit larger than about 32 MB on the wire is sent **in pieces** (`Commit.Split`): the Parquet files
+first, then the index documents, each piece a commit of its own with the same run and sequence and a
+`part` number; a single file or document larger than that travels alone. Each piece after the first has
+its own manifest (`_runs/<adapter>/<run>-<seq>-p<part>.json`). laker reads at most two commit bodies at a
+time, the others wait, so several agents committing together do not add up in its memory.
+
 ### 11.3 Identity and approval
 
 - On its first start the agent creates an **Ed25519** key (`<datadir>/agent.key`, mode 0600). Its **ID** is
@@ -485,7 +491,7 @@ client retries network errors and 5xx answers, never refusals.
 | `POST hello` | registers or refreshes the agent, answers `{id, status}` |
 | `HEAD blobs/{sha}` | 200 if the content is in the lake, 404 otherwise |
 | `PUT blobs/{sha}` | laker receives into a temporary file, **hashes it again** and stores it only if it matches |
-| `POST commit` | the Parquet files and index changes of a commit (`domain.Commit`) |
+| `POST commit` | the Parquet files and index changes of a commit (`domain.Commit`), or one piece of it |
 | `POST finish` | the run record |
 
 Every request carries `X-Laker-Agent`, `X-Laker-Time`, `X-Laker-Content-SHA256` and `X-Laker-Signature`, the
@@ -580,7 +586,10 @@ reported to laker too, so its status page shows why. `config discover` and `conf
 
 ### 11.10 Known limits
 
-- A commit travels in one request (up to 1 GiB): with very long mails, keep `commitevery` low.
+- The agent still builds a whole commit in memory before cutting it in pieces: with very long mails or
+  documents, keep `commitevery` low. laker accepts single requests up to 1 GiB, for older agents.
+- Update laker before its agents: an older laker gives every piece of a commit the manifest name of the
+  first, so only that one is written (the data and the index are complete all the same).
 - The agent's checkpoints live only on the agent: if its `datadir` is lost it reads everything again (blobs
   are not duplicated, Parquet rows are) and must be approved again, since its key is new.
 - `laker-agent run` cannot run while `laker-agent serve` does (the state is single-process).

@@ -170,6 +170,51 @@ func signed(t *testing.T, key *agentkey.Key, method, url, path string, body []by
 	return resp
 }
 
+// A commit too large for one request arrives in pieces and ends up whole.
+func TestLargeCommitTravelsInPieces(t *testing.T) {
+	old := agentclient.MaxPart
+	agentclient.MaxPart = 1 // every file and document in a request of its own
+	defer func() { agentclient.MaxPart = old }()
+
+	srv := newServer(t)
+	ctx := context.Background()
+	root := t.TempDir()
+	for _, name := range []string{"alpha", "beta", "gamma"} {
+		os.WriteFile(filepath.Join(root, name+".txt"), []byte("quarterly figures of "+name), 0o644)
+	}
+	ag := newAgent(t, srv.url)
+	if _, err := ag.client.Hello(ctx, "home", "nas", "test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.SetAgentStatus(srv.state, ag.key.ID(), domain.AgentApproved); err != nil {
+		t.Fatal(err)
+	}
+	run := ag.runner.Run(ctx, filesAdapter(t, "nas-docs", root), false)
+	if run.Status != domain.RunOK || run.Stats.Rows < 3 {
+		t.Fatalf("run: %+v %s", run.Stats, run.Error)
+	}
+
+	trees, _ := core.TreeAt(ctx, srv.env.Lake, "nas-docs", time.Time{})
+	if len(trees["nas-docs"]) != 3 {
+		t.Errorf("server tree: %v", trees)
+	}
+	// the documents came each in a piece of its own, after the Parquet file
+	if res, _ := srv.index.Search(ctx, domain.Query{Text: "txt"}); res.Total != 3 {
+		t.Errorf("server index: %d hits, want 3", res.Total)
+	}
+	// only a piece that writes files has a manifest: here the first
+	var manifests []string
+	srv.env.Lake.List(ctx, "_runs/nas-docs/", func(k string) error { manifests = append(manifests, k); return nil })
+	if len(manifests) != 1 || strings.Contains(manifests[0], "-p0") {
+		t.Errorf("manifests: %v", manifests)
+	}
+
+	// the same content again: nothing new, nothing sent
+	if run := ag.runner.Run(ctx, filesAdapter(t, "nas-docs", root), false); run.Stats.Rows != 0 {
+		t.Errorf("second run rows = %d", run.Stats.Rows)
+	}
+}
+
 func TestServerChecksWhatAgentsSend(t *testing.T) {
 	srv := newServer(t)
 	ctx := context.Background()
