@@ -1,5 +1,8 @@
 # Laker configuration. ${VAR} in any value is read from the environment.
-schemaversion: 3
+# laker serve reads no source itself: mailboxes, files and databases are read by
+# laker-agent next to the data (on this machine too), which sends them to the
+# web listener below. See `laker-agent config generate`.
+schemaversion: 4
 
 common:
   id:
@@ -32,9 +35,10 @@ common:
   snapshot:
     schedule: "0 30 4 * * *"     # every day at 04:30, or manual
 
-  # browser interface of laker serve: search, mail, files, status
+  # listener of laker serve: browser interface, CLI API and agent API
+  # (/agent/v1/: each laker-agent waits for approval with `laker agents approve`)
   web:
-    enabled: true
+    enabled: true                # required
     host: 127.0.0.1              # keep it local; expose it only behind a TLS reverse proxy
     port: 8090
     token: ${LAKER_WEB_TOKEN}    # at least 16 characters
@@ -45,52 +49,3 @@ common:
   mcp:
     enabled: false
     redirecturis: []             # empty: Claude's callbacks
-
-  # laker-agent processes may send data (they wait for approval: laker agents)
-  agents:
-    enabled: false
-
-  defaults:
-    timeout: 2h
-    commitevery: 500
-
-# Active adapters: type + params + schedule (6-field cron with seconds,
-# @every 10m, @hourly, or manual). `laker types` lists the known types.
-# heartbeat (optional) is the address of an uptime monitor (a Better Stack
-# heartbeat, healthchecks.io) called after every run, with /fail appended when
-# the run failed: the monitor warns when the source fails or stops running.
-adapters: []
-#  - name: mail-personal
-#    enabled: true
-#    type: imap
-#    schedule: "@every 10m"
-#    heartbeat: ${MAIL_HEARTBEAT_URL}
-#    params:
-#      host: imap.gmail.com
-#      port: 993
-#      security: tls            # tls | starttls | none
-#      username: me@gmail.com
-#      password: ${IMAP_GMAIL_PASS}
-#      folders: ["[Gmail]/All Mail"]
-#      exclude: []
-#      since: ""                # YYYY-MM-DD limits the first run
-#      maxsize: 104857600       # bytes; larger messages are recorded, not stored
-#
-#  - name: files-home
-#    enabled: true
-#    type: fs
-#    schedule: "0 0 3 * * *"
-#    params:
-#      paths: [/home/me/Documents]
-#      exclude: ["**/.git/**", "**/node_modules/**", "**/.DS_Store"]
-#      extract: true            # text of PDF, Office, OpenDocument, HTML, text files for the search
-#      extractmaxsize: 52428800 # bytes
-#
-#  - name: db-erp
-#    enabled: true
-#    type: postgres             # or mysql (MySQL, MariaDB)
-#    schedule: "0 */30 * * * *" # history granularity: one version per row per run
-#    params:
-#      dsn: ${ERP_DSN}          # postgres://user:pass@host:5432/db | user:pass@tcp(host:3306)/db
-#      tables: ["public.*"]     # "schema.table" patterns; default: all (MySQL: the DSN database)
-#      exclude: ["public.sessions"]

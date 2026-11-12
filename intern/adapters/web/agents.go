@@ -48,7 +48,7 @@ func (s *Server) agents(w http.ResponseWriter, r *http.Request) {
 			LastSeen: s.when(a.LastSeen), Sources: strings.Join(sources[a.ID], ", "),
 			Status: a.Status, StatusText: statusText[a.Status]})
 	}
-	data := map[string]any{"Title": "Agents", "Agents": views, "Enabled": s.AgentsEnabled}
+	data := map[string]any{"Title": "Agents", "Agents": views}
 	switch q := r.URL.Query(); {
 	case q.Get("approved") != "":
 		data["Notice"] = "Approved: " + q.Get("approved")

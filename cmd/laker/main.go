@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -36,7 +35,7 @@ func setupCLI() *cobra.Command {
 
 	serveCmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Start the scheduler with every enabled adapter",
+		Short: "Serve the lake, the web UI and the API the laker-agents send their data to",
 		Args:  cobra.NoArgs,
 		Run: func(cmd *cobra.Command, args []string) {
 			if check, _ := cmd.Flags().GetBool("check"); check {
@@ -48,20 +47,9 @@ func setupCLI() *cobra.Command {
 	}
 	serveCmd.Flags().Bool("check", false, "Run the init phase, reach the lake, print "+checkResultMarker+"{json} and exit, without serving")
 
-	runCmd := &cobra.Command{
-		Use:   "run <adapter>",
-		Short: "Run one adapter now, once",
-		Args:  cobra.ExactArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			dry, _ := cmd.Flags().GetBool("dry-run")
-			commandRun(configPath, args[0], dry)
-		},
-	}
-	runCmd.Flags().Bool("dry-run", false, "Read and compare, write nothing (no blob, row, index or state)")
-
 	listCmd := &cobra.Command{
 		Use:   "list",
-		Short: "List the adapters with their schedule and last run",
+		Short: "List the sources the agents write, and the snapshot, with their last run",
 		Args:  cobra.NoArgs,
 		Run:   func(cmd *cobra.Command, args []string) { commandList(configPath) },
 	}
@@ -201,17 +189,6 @@ func setupCLI() *cobra.Command {
 		Run:   func(cmd *cobra.Command, args []string) { commandAgentsSet(configPath, args[0], domain.AgentRevoked) },
 	})
 
-	typesCmd := &cobra.Command{
-		Use:   "types",
-		Short: "List the adapter types this build knows",
-		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			for _, t := range sortedTypes() {
-				fmt.Println(t)
-			}
-		},
-	}
-
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
@@ -238,8 +215,8 @@ func setupCLI() *cobra.Command {
 	}
 	configCmd.AddCommand(configCreateCmd, configValidateCmd)
 
-	rootCmd.AddCommand(serveCmd, runCmd, listCmd, searchCmd, showCmd, getCmd, lsCmd,
-		reindexCmd, stateCmd, snapshotCmd, restoreCmd, verifyCmd, viewsCmd, agentsCmd, typesCmd, versionCmd, configCmd)
+	rootCmd.AddCommand(serveCmd, listCmd, searchCmd, showCmd, getCmd, lsCmd,
+		reindexCmd, stateCmd, snapshotCmd, restoreCmd, verifyCmd, viewsCmd, agentsCmd, versionCmd, configCmd)
 	return rootCmd
 }
 
@@ -259,8 +236,7 @@ func consoleLogger() zerolog.Logger {
 	return logger.Console("LAKER", color.New(color.FgWhite).SprintFunc())
 }
 
-// loadConfig finds, decodes and validates the configuration, adapter params
-// included.
+// loadConfig finds, decodes and validates the configuration.
 func loadConfig(path string) (*config.Config, error) {
 	path, err := config.Locate(path)
 	if err != nil {
@@ -270,19 +246,7 @@ func loadConfig(path string) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := config.Validate(cfg, sourceTypes); err != nil {
-		return nil, err
-	}
-	var errs []error
-	for _, a := range cfg.Adapters {
-		if !a.Enabled {
-			continue // checked once enabled: its variables may not be set yet
-		}
-		if _, err := buildSource(cfg, a, zerolog.Nop()); err != nil {
-			errs = append(errs, fmt.Errorf("ERR013: adapter %s: %w", a.Name, err))
-		}
-	}
-	if err := errors.Join(errs...); err != nil {
+	if err := config.Validate(cfg); err != nil {
 		return nil, err
 	}
 	return cfg, nil
@@ -342,5 +306,5 @@ func commandConfigValidate(configPath string) {
 		lg.Error().Msgf("ERR006: invalid configuration:\n%v", err)
 		os.Exit(1)
 	}
-	lg.Info().Str("config_hash", config.Hash(cfg)).Int("adapters", len(cfg.Adapters)).Msg("INF006: configuration is valid")
+	lg.Info().Str("config_hash", config.Hash(cfg)).Msg("INF006: configuration is valid")
 }

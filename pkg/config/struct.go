@@ -4,12 +4,14 @@ import "time"
 
 // SchemaVersion is the shape of Config this build expects. It goes up by one
 // whenever a yaml key is added, renamed, removed or changes type.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
+// Config is the configuration of laker serve. laker reads no source itself:
+// every adapter runs in a laker-agent (AgentConfig), which sends its data to
+// the agent API of the web listener.
 type Config struct {
-	SchemaVersion int       `yaml:"schemaversion"`
-	Common        Common    `yaml:"common"`
-	Adapters      []Adapter `yaml:"adapters"`
+	SchemaVersion int    `yaml:"schemaversion"`
+	Common        Common `yaml:"common"`
 }
 
 type Common struct {
@@ -24,18 +26,11 @@ type Common struct {
 	Snapshot Snapshot `yaml:"snapshot"`
 	Web      Web      `yaml:"web"`
 	MCP      MCP      `yaml:"mcp"`
-	Agents   Agents   `yaml:"agents"`
-	Defaults Defaults `yaml:"defaults"`
 }
 
-// Agents lets laker-agent processes send data to this laker, through the web
-// listener (/agent/v1/). Each agent waits for approval on its first contact.
-type Agents struct {
-	Enabled bool `yaml:"enabled"`
-}
-
-// Web is the browser interface served by `laker serve`; the CLI also talks to
-// it while serve runs.
+// Web is the listener of `laker serve`: the browser interface, the API the
+// CLI talks to while serve runs, and the agent API (/agent/v1/) the
+// laker-agents send their data to. It is required.
 type Web struct {
 	Enabled bool   `yaml:"enabled"`
 	Host    string `yaml:"host"` // 127.0.0.1 unless behind a TLS reverse proxy
@@ -115,19 +110,20 @@ type FS struct {
 	Path string `yaml:"path"`
 }
 
-// Defaults apply to every adapter.
+// Defaults apply to every adapter of an agent.
 type Defaults struct {
 	Timeout     time.Duration `yaml:"timeout"`
 	CommitEvery int           `yaml:"commitevery"`
 }
 
-// Adapter is one active ingestion: a source type, its parameters and when it runs.
+// Adapter is one active ingestion of an agent: a source type, its parameters
+// and when it runs.
 type Adapter struct {
 	Name    string `yaml:"name"`
 	Enabled bool   `yaml:"enabled"`
 	Type    string `yaml:"type"`
 	// Schedule is a 6-field cron expression (with seconds), a descriptor such
-	// as "@every 10m" or "@hourly", or "manual" (only `laker run`).
+	// as "@every 10m" or "@hourly", or "manual" (only `laker-agent run`).
 	Schedule string `yaml:"schedule"`
 	// Heartbeat, optional, is the address of an uptime monitor (Better Stack
 	// heartbeat, healthchecks.io) called after every run: as it is when the

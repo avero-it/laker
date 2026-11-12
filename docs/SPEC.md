@@ -3,7 +3,8 @@
 > A **personal data lake** in Go. Laker ingests mailboxes (IMAP), files and small databases (Postgres,
 > MySQL/MariaDB) into an S3 bucket (Hetzner Object Storage) in open, **immutable** formats, and offers
 > **full-text search and browsing** over all of it. `laker serve` is the always-on service that owns the
-> lake; `laker-agent` runs next to the data and sends it there.
+> lake and reads no source itself; `laker-agent` runs next to the data (on the same machine too) and sends
+> it there.
 
 ---
 
@@ -98,8 +99,8 @@ type RunSink interface {
     Commit(ctx) error
 }
 
-// Ingest is where a run delivers: in-process for laker's own adapters (core.LocalIngest),
-// over HTTPS for an agent (agentclient.Client).
+// Ingest is where a run delivers: over HTTPS from an agent (agentclient.Client) to laker,
+// which hands it to core.LocalIngest; in-process (core.LocalIngest) only in tests.
 type Ingest interface {
     BlobExists(ctx, sha256 string) (bool, error)
     PutBlob(ctx, sha256 string, size int64, r io.Reader) (created bool, err error)
@@ -121,6 +122,8 @@ On S3, `PutIfAbsent` sends `If-None-Match: *` (`conditionalput: true`) after a `
 deterministic (content hashes, run IDs), so a second write of the same key is harmless.
 
 ### 3.2 A run
+
+A run happens in `laker-agent`; laker only receives it (§11).
 
 1. The scheduler fires; if the previous run of the same adapter is still going, this one is skipped.
 2. The source reads its checkpoint, finds what is new, puts the blobs (no-op if the hash exists).
@@ -294,7 +297,8 @@ s3://<bucket>/
 Served by `laker serve` (`common.web`):
 
 - search with highlighting and paging; mail reading (text, HTML version, attachments, `.eml` download);
-  file browsing now or at a past date with the history of each file; adapter status with "Run now";
+  file browsing now or at a past date with the history of each file; status of every agent source, and of
+  the snapshot with "Run now";
   agents page; connectors page (§6.4);
 - **access**: a token (≥ 16 characters) asked once, then an `HttpOnly`, `SameSite=Strict` cookie; POSTs must
   come from the same site; default bind `127.0.0.1`, exposed only behind a TLS reverse proxy;
@@ -352,7 +356,7 @@ error), `${VAR}` in any value is read from the environment, `laker config valida
 at once. `laker config create` writes a commented example.
 
 ```yaml
-schemaversion: 3
+schemaversion: 4
 common:
   id: { name: laker }
   timezone: Europe/Rome
@@ -370,29 +374,13 @@ common:
       conditionalput: true
     fs: { path: ./lake }
   snapshot: { schedule: "0 30 4 * * *" }
+  # required: the UI, the CLI API and the agent API (/agent/v1) share this listener
   web: { enabled: true, host: 127.0.0.1, port: 8090, token: ${LAKER_WEB_TOKEN}, publicurl: https://laker.example.com }
   mcp: { enabled: false, redirecturis: [] }   # §6.4; empty: Claude's callback
-  agents: { enabled: false }
-  defaults: { timeout: 2h, commitevery: 500 }
-
-adapters:
-  - name: mail-personal
-    enabled: true
-    type: imap                       # imap | fs | postgres | mysql
-    schedule: "@every 10m"           # 6-field cron with seconds, @every, @hourly, or manual
-    heartbeat: ${MAIL_HEARTBEAT_URL} # optional: uptime monitor told how every run ended (§8.1)
-    params: { host: imap.example.com, username: me@example.com, password: ${IMAP_PASS}, folders: ["*"] }
-  - name: files-home
-    enabled: true
-    type: fs
-    schedule: "0 0 3 * * *"
-    params: { paths: [/home/me/Documents], exclude: ["**/.git/**"] }
-  - name: db-erp
-    enabled: true
-    type: postgres
-    schedule: "0 */30 * * * *"
-    params: { dsn: ${ERP_DSN}, tables: ["public.*"] }
 ```
+
+laker has no `adapters`: the sources (mailboxes, folders, databases, chats) are configured in each
+`laker-agent` (§11.6), and an old configuration that still lists them is refused.
 
 `laker serve --check` runs the init phase, reaches the bucket (reporting Object Lock and retention) and
 prints `LAKER_CHECK_RESULT {json}`, writing nothing.
@@ -412,7 +400,7 @@ prints `LAKER_CHECK_RESULT {json}`, writing nothing.
 ### 8.1 Heartbeats
 
 A source that stops being read loses data silently (WhatsApp unlinks a device offline for two weeks), and
-logs do not say that nothing happened. An adapter, of laker or of an agent, may have a `heartbeat`: the
+logs do not say that nothing happened. An adapter of an agent may have a `heartbeat`: the
 address of an uptime monitor (a Better Stack heartbeat, healthchecks.io) that `pkg/heartbeat` calls after
 every run that is not a dry run: as it is when the run succeeded, with `/fail` appended when it failed.
 The monitor, set to the period of the schedule plus some grace, then warns when the source fails, when it
@@ -443,7 +431,7 @@ reached is a warning (`WRN104`), never a failed run.
    their names (100 picked at random by default, `--hash-all` for all: that reads the whole lake). It
    exits 1 if anything is missing or damaged. Parquet files of no manifest and contents no row names are
    what an interrupted run leaves: reported, not errors. It reads what refers before what is referred to,
-   so it can run while `laker serve` ingests.
+   so it can run while `laker serve` receives.
 
 ---
 
@@ -475,7 +463,8 @@ laker, which reaches nothing itself: the agents connect out to it. Advantages:
 - the lake, the index and the web UI have one place and one writer;
 - several agents (home, office, NAS) feed the same lake and the same search.
 
-`laker serve` may still run adapters of its own; the two coexist.
+`laker serve` reads no source itself: even on a single machine the data comes from a `laker-agent` next to
+it (`server: http://127.0.0.1:8090`). laker is only the lake side; the source side is only in the agent.
 
 ### 11.2 Division of work
 
@@ -522,8 +511,8 @@ laker belongs behind an HTTPS reverse proxy (the agent warns about a plain `http
 
 ### 11.5 Who may write what
 
-- Each **source** (adapter name) has one writer (`_owners`): the first agent that uses it, or `laker serve`
-  for its own adapters. Another agent with the same name gets `409`, so names must be unique (convention:
+- Each **source** (adapter name) has one writer (`_owners`): the first agent that uses it. Another agent
+  with the same name gets `409`, so names must be unique (convention:
   the agent as prefix, `home-mail`, `nas-documents`).
 - A commit may write only under its source's prefixes (`mail/messages/account=<s>/`,
   `files/inventory/source=<s>/`, `files/text/source=<s>/`, `db/<s>/`, `chat/messages/source=<s>/`), index only
@@ -533,7 +522,7 @@ laker belongs behind an HTTPS reverse proxy (the agent warns about a plain `http
 
 ### 11.6 Agent configuration
 
-laker: `common.agents.enabled: true` (needs `common.web`, whose listener it uses). The agent
+laker: nothing to set, the agent API is always on the `common.web` listener (required). The agent
 (`laker-agent.yaml`, see §11.7 to write it):
 
 ```yaml
@@ -545,7 +534,7 @@ agent:
   datadir: /var/lib/laker-agent     # key, checkpoints, scratch files
   log: { verbose: false, use: console, betterstack: { sourcetoken: "", ingestinghost: "" } }
   defaults: { timeout: 2h, commitevery: 200 }
-adapters:                           # as in laker
+adapters:                           # the sources: only agents have them
   - { name: home-documents, enabled: true, type: fs, schedule: "0 0 3 * * *", params: { paths: [/home/me/Documents] } }
 ```
 
@@ -614,3 +603,5 @@ reported to laker too, so its status page shows why. `config discover` and `conf
 - The agent's checkpoints live only on the agent: if its `datadir` is lost it reads everything again (blobs
   are not duplicated, Parquet rows are) and must be approved again, since its key is new.
 - `laker-agent run` cannot run while `laker-agent serve` does (the state is single-process).
+- Sources that an older laker read with adapters of its own stay owned by `local` in `_owners`: no agent can
+  continue them under the same name (`409`); give the agent's adapter a new name.

@@ -9,7 +9,8 @@ import (
 	"github.com/robfig/cron/v3"
 )
 
-// ScheduleManual marks an adapter that only runs with `laker run`.
+// ScheduleManual marks an adapter that only runs with `laker-agent run`, or a
+// snapshot taken only with `laker snapshot`.
 const ScheduleManual = "manual"
 
 // CronParser parses adapter schedules: 6 fields with seconds, or a descriptor.
@@ -17,10 +18,9 @@ var CronParser = cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,62}$`)
 
-// Validate checks what decoding cannot: required values, allowed choices,
-// schedules, and that every adapter type is one this build knows. It reports
-// every problem, not just the first.
-func Validate(cfg *Config, knownTypes map[string]bool) error {
+// Validate checks what decoding cannot: required values, allowed choices and
+// schedules. It reports every problem, not just the first.
+func Validate(cfg *Config) error {
 	var e errs
 
 	if cfg.SchemaVersion != SchemaVersion {
@@ -68,7 +68,9 @@ func Validate(cfg *Config, knownTypes map[string]bool) error {
 			e.add(fmt.Errorf("ERR723: common.snapshot.schedule %q: %v", c.Snapshot.Schedule, err))
 		}
 	}
-	if w := c.Web; w.Enabled {
+	if w := c.Web; !w.Enabled {
+		e.add(fmt.Errorf("ERR794: common.web.enabled must be true: the agents send their data to its listener"))
+	} else {
 		if len(w.Token) < 16 {
 			e.add(fmt.Errorf("ERR724: common.web.token must be at least 16 characters"))
 		}
@@ -85,9 +87,6 @@ func Validate(cfg *Config, knownTypes map[string]bool) error {
 		}
 	}
 	if c.MCP.Enabled {
-		if !c.Web.Enabled {
-			e.add(fmt.Errorf("ERR789: common.mcp needs common.web: MCP is served by its listener"))
-		}
 		if c.Web.PublicURL == "" {
 			e.add(fmt.Errorf("ERR78A: common.mcp needs common.web.publicurl: OAuth clients reach Laker at that address"))
 		}
@@ -97,17 +96,6 @@ func Validate(cfg *Config, knownTypes map[string]bool) error {
 			}
 		}
 	}
-	if c.Agents.Enabled && !c.Web.Enabled {
-		e.add(fmt.Errorf("ERR727: common.agents needs common.web: the agents send their data to its listener"))
-	}
-	if c.Defaults.Timeout <= 0 {
-		e.add(fmt.Errorf("ERR71B: common.defaults.timeout must be positive"))
-	}
-	if c.Defaults.CommitEvery <= 0 {
-		e.add(fmt.Errorf("ERR71C: common.defaults.commitevery must be positive"))
-	}
-
-	validateAdapters(&e, cfg.Adapters, knownTypes)
 
 	return e.join()
 }

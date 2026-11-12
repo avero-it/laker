@@ -28,12 +28,12 @@ browse** all of it from one web page — including how things were on any past d
 ```
 
 - **`laker serve`** is the always-on service: it owns the lake, the search index and the web UI,
-  and can run sources itself.
-- **`laker-agent`** runs next to the data with the same sources and sends what they read to laker.
+  and reads no source itself.
+- **`laker-agent`** runs next to the data with the sources and sends what they read to laker.
   Credentials stay on the agent and never reach laker; nothing has to reach into your networks. Each agent has an Ed25519
   identity; laker accepts it only after you approve its ID.
 
-A single machine needs only `laker serve`.
+A single machine runs both: `laker serve` and a `laker-agent` with `server: http://127.0.0.1:8090`.
 
 ## Install
 
@@ -79,37 +79,33 @@ Without a package manager: `sudo apt install ./laker_<version>_linux_amd64.deb`,
 ```bash
 make build                          # bin/laker, bin/laker-agent  (Go 1.27, vendored)
 
-bin/laker config create             # writes config.yaml: set the bucket, the web token, the adapters
+# laker: the lake, the index, the web UI
+bin/laker config create             # writes config.yaml: set the bucket and the web token
 export LAKER_S3_ACCESS_KEY=… LAKER_S3_SECRET_KEY=… LAKER_WEB_TOKEN=…
 bin/laker serve --check             # reaches the bucket, reports Object Lock, writes nothing
 bin/laker serve                     # web UI on http://127.0.0.1:8090
+
+# laker-agent: the sources, here or on the machine with the data
+bin/laker-agent config generate     # laker-agent.yaml: every adapter type, documented, disabled
+bin/laker-agent config discover     # finds mail accounts, folders, databases; asks before saving a secret
+bin/laker-agent config validate     # connects to every enabled adapter
+bin/laker-agent serve               # prints its ID and waits for approval
+bin/laker agents approve lkr-xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx   # or the "Agents" page
 ```
 
-An adapter in `config.yaml`:
+`server` in `laker-agent.yaml` is `http://127.0.0.1:8090` on the same machine, the https address of
+laker's reverse proxy elsewhere. An adapter in `laker-agent.yaml`:
 
 ```yaml
 adapters:
-  - name: mail-personal
+  - name: home-mail                 # the source name in the lake: unique across all agents
     enabled: true
     type: imap                      # imap | fs | postgres | mysql | telegram | whatsapp
     schedule: "@every 10m"          # 6-field cron, @every, @hourly, or manual
     params:
       host: imap.example.com
       username: me@example.com
-      password: ${IMAP_PASS}
-```
-
-### Adding an agent
-
-```bash
-# on laker: common.agents.enabled: true (behind a TLS reverse proxy)
-# on the machine with the data:
-laker-agent config generate         # laker-agent.yaml: every adapter type, documented, disabled
-laker-agent config discover         # finds mail accounts, folders, databases; asks before saving a secret
-laker-agent config validate         # connects to every enabled adapter
-laker-agent serve                   # prints its ID and waits
-# on laker:
-laker agents approve lkr-xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx   # or the "Agents" page
+      password: ${IMAP_PASS}        # in laker-agent.env next to the configuration (mode 0600)
 ```
 
 ### Using it from Claude
@@ -132,12 +128,11 @@ derived from the lake and restorable (`laker restore`, or `laker reindex` + `lak
 
 | Command | |
 |---|---|
-| `laker serve [--check]` | scheduler, web UI, agent API, MCP |
-| `laker run <adapter> [--dry-run]` | run once now |
+| `laker serve [--check]` | web UI, agent API, MCP, snapshots |
 | `laker search <query>` | full-text search (`from:`, `subject:`, `ext:`, `kind:mail\|file`, Italian stemming) |
 | `laker show <sha>` · `laker get <sha\|source:path> [--at date]` | read a message, download an original |
 | `laker ls <source>[:dir] [--at date]` | browse files, now or in the past |
-| `laker list` · `laker agents [approve\|revoke <id>]` | adapters and their runs, agents |
+| `laker list` · `laker agents [approve\|revoke <id>]` | sources and their runs, agents |
 | `laker views` | DuckDB SQL over the lake |
 | `laker reindex` · `laker state rebuild` · `laker snapshot` · `laker restore` | derived data |
 | `laker verify [--hash-all]` | check that nothing in the lake is missing or damaged |

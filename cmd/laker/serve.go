@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"text/tabwriter"
 	"time"
@@ -26,7 +27,6 @@ import (
 	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 	"github.com/avero-it/laker/pkg/config"
-	"github.com/avero-it/laker/pkg/heartbeat"
 	"github.com/avero-it/laker/pkg/logger"
 	"github.com/avero-it/laker/pkg/signaler"
 	"github.com/avero-it/laker/pkg/version"
@@ -43,7 +43,7 @@ func fatalf(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	for _, a := range args {
 		if err, ok := a.(error); ok && (errors.Is(err, bbolt.ErrBusy) || errors.Is(err, bleve.ErrBusy)) {
-			msg += "\n(an adapter of laker serve is running now: retry when it is done)"
+			msg += "\n(laker serve is writing now, a snapshot or an agent's run: retry when it is done)"
 		}
 	}
 	fmt.Fprintln(os.Stderr, msg)
@@ -54,7 +54,6 @@ func commandServe(configPath string) {
 	cfg := mustConfig(configPath)
 	lf := newLoggers(cfg)
 	defer lf.Close()
-	defer closeExtractor()
 
 	lg := lf.For("LAKER", color.New(color.FgWhite).SprintFunc())
 	lg.Info().Str("version", version.GetVersion()).Str("config_hash", config.Hash(cfg)).Msg("INF001: starting Laker")
@@ -86,37 +85,12 @@ func commandServe(configPath string) {
 		lg.Warn().Msg("WRN001: the bucket has no Object Lock: Laker never deletes, but the storage does not enforce it")
 	}
 
+	// laker reads no source itself: the data comes from the agents, through
+	// the agent API of the web listener; its only job is the snapshot
 	stores := buildStores(cfg, serveWait)
-	runner := core.LocalRunner(lake, stores, lf.For("CORE", color.New(color.FgWhite).SprintFunc()))
-	runner.Beat = heartbeat.Ping
 	loc, _ := time.LoadLocation(cfg.Common.Timezone)
 
-	// the adapters of this laker own their sources: no agent may write them
-	if err := claimLocal(cfg, stores); err != nil {
-		lg.Error().Msgf("ERR00C: %v", err)
-		return
-	}
-
 	var jobs []core.Job
-	var adapters []web.Adapter
-	for _, a := range cfg.Adapters {
-		adapters = append(adapters, web.Adapter{Name: a.Name, Type: a.Type, Schedule: a.Schedule, Enabled: a.Enabled})
-		if !a.Enabled {
-			continue
-		}
-		adapter, err := buildAdapter(cfg, a, lf)
-		if err != nil {
-			lg.Error().Msgf("ERR007: %v", err)
-			return
-		}
-		var sched cron.Schedule // nil: manual, runs only on demand
-		if a.Schedule != config.ScheduleManual {
-			sched, _ = config.CronParser.Parse(a.Schedule)
-		}
-		jobs = append(jobs, core.Job{Name: a.Name, Schedule: sched, Run: func(ctx context.Context) {
-			runner.Run(ctx, adapter, false)
-		}})
-	}
 	var snapSched cron.Schedule
 	if s := cfg.Common.Snapshot.Schedule; s != config.ScheduleManual {
 		snapSched, _ = config.CronParser.Parse(s)
@@ -127,14 +101,15 @@ func commandServe(configPath string) {
 			snapLog.Error().Msgf("ERR008: snapshot failed: %v", err)
 		}
 	}})
-	adapters = append(adapters, web.Adapter{Name: "snapshot", Type: "snapshot", Schedule: cfg.Common.Snapshot.Schedule, Enabled: true})
+	adapters := []web.Adapter{{Name: "snapshot", Type: "snapshot", Schedule: cfg.Common.Snapshot.Schedule, Enabled: true}}
 
 	sch := core.NewScheduler(ctx, loc, lf.For("SCHED", color.New(color.FgYellow).SprintFunc()), jobs)
 
 	webDone := make(chan struct{})
-	if wc := cfg.Common.Web; wc.Enabled {
+	{
+		wc := cfg.Common.Web
 		// the web interface keeps the stores open for the life of serve;
-		// the runs share them
+		// the agent API and the snapshot share them
 		state, index, release, err := stores.Acquire()
 		if err != nil {
 			lg.Error().Msgf("ERR009: cannot open the local stores: %v", err)
@@ -146,7 +121,7 @@ func commandServe(configPath string) {
 			Lake: lake, Index: index, State: state, Adapters: adapters, Runs: sch, LakeInfo: info,
 			Location: loc, Token: wc.Token, Version: version.GetVersion(),
 			Logger: lf.For("WEB", color.New(color.FgBlue).SprintFunc()),
-			Agents: agentsHandler(cfg, lake, stores, state, lf), AgentsEnabled: cfg.Common.Agents.Enabled,
+			Agents: agentsHandler(cfg, lake, stores, state, lf),
 		}
 		if cfg.Common.MCP.Enabled {
 			grants, err := bbolt.Open(oauthPath(cfg), serveWait)
@@ -181,57 +156,15 @@ func commandServe(configPath string) {
 			defer close(webDone)
 			if err := srv.Serve(ctx, net.JoinHostPort(wc.Host, strconv.Itoa(wc.Port))); err != nil {
 				lg.Error().Msgf("ERR00B: %v", err)
-				cancel() // a serve without its interface is not what was configured
+				cancel() // a serve without its listener receives nothing
 			}
 		}()
-	} else {
-		close(webDone)
 	}
 
 	lg.Info().Int("jobs", len(jobs)).Msg("INF003: running, waiting for a signal")
 	sch.Serve()
 	<-webDone
 	lg.Info().Msg("INF004: stopped")
-}
-
-func commandRun(configPath, name string, dryRun bool) {
-	cfg := mustConfig(configPath)
-	var a *config.Adapter
-	for i := range cfg.Adapters {
-		if cfg.Adapters[i].Name == name {
-			a = &cfg.Adapters[i]
-		}
-	}
-	if a == nil {
-		fatalf("ERR040: no adapter named %q in the configuration", name)
-	}
-	if !dryRun && runInServe(cfg, name) {
-		return
-	}
-
-	lf := newLoggers(cfg)
-	defer lf.Close()
-	defer closeExtractor()
-	ctx, cancel := signaler.Context(context.Background(), lf.For("SIG", color.New(color.FgHiBlack).SprintFunc()))
-	defer cancel()
-
-	if err := os.MkdirAll(cfg.Common.DataDir, 0o750); err != nil {
-		fatalf("ERR041: cannot create the data directory: %v", err)
-	}
-	lake, err := buildLake(cfg, lf.For("LAKE", color.New(color.FgGreen).SprintFunc()))
-	if err != nil {
-		fatalf("ERR042: %v", err)
-	}
-	adapter, err := buildAdapter(cfg, *a, lf)
-	if err != nil {
-		fatalf("ERR043: %v", err)
-	}
-	runner := core.LocalRunner(lake, buildStores(cfg, cliWait), lf.For("CORE", color.New(color.FgWhite).SprintFunc()))
-	runner.Beat = heartbeat.Ping
-	run := runner.Run(ctx, adapter, dryRun)
-	if run.Status != domain.RunOK {
-		os.Exit(1)
-	}
 }
 
 func commandList(configPath string) {
@@ -270,21 +203,48 @@ func commandList(configPath string) {
 	}
 	defer state.Close()
 
-	fmt.Fprintln(w, "NAME\tTYPE\tENABLED\tSCHEDULE\tNEXT\tLAST RUN\tSTATUS\tROWS")
-	for _, a := range cfg.Adapters {
-		next := "-"
-		if a.Enabled && a.Schedule != config.ScheduleManual {
-			if s, err := config.CronParser.Parse(a.Schedule); err == nil {
-				next = s.Next(time.Now().In(loc)).Format("2006-01-02 15:04")
-			}
+	// without serve: the snapshot, then every source the agents write, as
+	// serve lists them
+	owners, err := core.Owners(state)
+	if err != nil {
+		fatalf("ERR047: %v", err)
+	}
+	agents := map[string]string{}
+	if list, err := core.ListAgents(state); err == nil {
+		for _, a := range list {
+			agents[a.ID] = a.Name
 		}
+	}
+	sources := make([]string, 0, len(owners))
+	for src := range owners {
+		sources = append(sources, src)
+	}
+	sort.Strings(sources)
+
+	fmt.Fprintln(w, "NAME\tTYPE\tENABLED\tSCHEDULE\tNEXT\tLAST RUN\tSTATUS\tROWS")
+	row := func(name, typ, schedule, next string) {
 		last, status, rows := "-", "-", "-"
-		if r, err := core.LastRun(state, a.Name); err == nil && r != nil {
+		if r, err := core.LastRun(state, name); err == nil && r != nil {
 			last = r.EndedAt.In(loc).Format("2006-01-02 15:04")
 			status = string(r.Status)
 			rows = fmt.Sprint(r.Stats.Rows)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%v\t%s\t%s\t%s\t%s\t%s\n", a.Name, a.Type, a.Enabled, a.Schedule, next, last, status, rows)
+		fmt.Fprintf(w, "%s\t%s\t%v\t%s\t%s\t%s\t%s\t%s\n", name, typ, true, schedule, next, last, status, rows)
+	}
+	snapNext := "-"
+	if s := cfg.Common.Snapshot.Schedule; s != config.ScheduleManual {
+		if sch, err := config.CronParser.Parse(s); err == nil {
+			snapNext = sch.Next(time.Now().In(loc)).Format("2006-01-02 15:04")
+		}
+	}
+	row("snapshot", "snapshot", cfg.Common.Snapshot.Schedule, snapNext)
+	for _, src := range sources {
+		o := owners[src]
+		name := agents[o.Agent]
+		if name == "" {
+			name = o.Agent
+		}
+		row(src, o.Type, "agent "+name, "-")
 	}
 }
 
@@ -320,25 +280,8 @@ func snapshot(ctx context.Context, cfg *config.Config, lake out.Lake, stores *co
 	return nil
 }
 
-func claimLocal(cfg *config.Config, stores *core.Stores) error {
-	state, _, release, err := stores.Acquire()
-	if err != nil {
-		return err
-	}
-	defer release()
-	for _, a := range cfg.Adapters {
-		if err := core.Claim(state, a.Name, domain.Owner{Agent: domain.LocalOwner, Type: a.Type}); err != nil {
-			return fmt.Errorf("ERR00D: adapter %s: %w", a.Name, err)
-		}
-	}
-	return nil
-}
-
-// agentsHandler is the API the agents send to, nil when they are disabled.
+// agentsHandler is the API the agents send to.
 func agentsHandler(cfg *config.Config, lake out.Lake, stores *core.Stores, state out.StateStore, lf *logger.Factory) http.Handler {
-	if !cfg.Common.Agents.Enabled {
-		return nil
-	}
 	return agentapi.New(agentapi.Deps{
 		Ingest: &core.LocalIngest{Lake: lake, Stores: stores}, State: state, TmpDir: tmpDir(cfg),
 		Logger: lf.For("AGENTS", color.New(color.FgMagenta).SprintFunc()),

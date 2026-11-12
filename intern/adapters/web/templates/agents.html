@@ -1,6 +1,5 @@
 {{define "content"}}
 <h1>Agents</h1>
-{{if not .Enabled}}<div class="notice">Agents are disabled: set <code>common.agents.enabled: true</code> in the laker configuration.</div>{{end}}
 {{if .Notice}}<div class="notice">{{.Notice}}</div>{{end}}
 <p class="meta">A new agent shows up here as "pending" on its first contact. Approve it only if the ID is the one its <code>laker-agent</code> prints at start.</p>
 <table>

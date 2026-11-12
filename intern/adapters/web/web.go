@@ -59,9 +59,9 @@ type Deps struct {
 	Token    string
 	Version  string
 	Logger   zerolog.Logger
-	// Agents receives the data of the agents (/agent/v1/), nil if disabled.
-	Agents        http.Handler
-	AgentsEnabled bool
+	// Agents receives the data of the agents (/agent/v1/): the only way data
+	// reaches the lake. nil only in tests.
+	Agents http.Handler
 	// OAuth guards MCP (/mcp, behind its own tokens, not the web token);
 	// both nil if MCP is disabled.
 	OAuth *oauth.Server

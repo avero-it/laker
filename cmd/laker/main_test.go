@@ -296,14 +296,16 @@ func TestCheckReportsPhaseAndCode(t *testing.T) {
 	}
 }
 
-func TestUnknownAdapterTypeFailsValidation(t *testing.T) {
+// laker reads no source: a configuration that still lists adapters is
+// refused when it is loaded, with the key named.
+func TestAdaptersAreRefused(t *testing.T) {
 	path := writeConfig(t, t.TempDir())
 	b, _ := os.ReadFile(path)
-	b = []byte(strings.Replace(string(b), "adapters: []", "adapters:\n  - {name: mail, enabled: true, type: pop3, schedule: manual, params: {}}", 1))
+	b = append(b, []byte("adapters:\n  - {name: mail, enabled: true, type: imap, schedule: manual, params: {}}\n")...)
 	os.WriteFile(path, b, 0o600)
 
 	res := runCheck(t.Context(), path)
-	if res.OK || res.Phase != "validate" || !strings.Contains(res.Message, "ERR71F") {
+	if res.OK || res.Phase != "load" || !strings.Contains(res.Message, "adapters") {
 		t.Fatalf("result = %+v", res)
 	}
 }

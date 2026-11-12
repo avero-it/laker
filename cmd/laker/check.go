@@ -76,7 +76,7 @@ func runCheck(ctx context.Context, path string) checkResult {
 	}
 	res.ConfigHash = config.Hash(cfg)
 
-	if err := config.Validate(cfg, sourceTypes); err != nil {
+	if err := config.Validate(cfg); err != nil {
 		return res.fail("validate", fmt.Errorf("ERR022: failed to validate config: %w", err))
 	}
 

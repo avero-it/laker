@@ -5,31 +5,16 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/fatih/color"
 	"github.com/rs/zerolog"
 
 	"github.com/avero-it/laker/intern/adapters/indexer/bleve"
 	"github.com/avero-it/laker/intern/adapters/lake/fs"
 	"github.com/avero-it/laker/intern/adapters/lake/s3"
-	"github.com/avero-it/laker/intern/adapters/sources"
 	"github.com/avero-it/laker/intern/adapters/state/bbolt"
 	"github.com/avero-it/laker/intern/core"
 	"github.com/avero-it/laker/intern/core/ports/out"
 	"github.com/avero-it/laker/pkg/config"
-	"github.com/avero-it/laker/pkg/extract"
-	"github.com/avero-it/laker/pkg/logger"
 )
-
-// sourceTypes are the adapter types this build knows.
-var sourceTypes = sources.Types
-
-// extractor is shared by every source of the process; its PDF engine starts
-// on the first PDF and is released by closeExtractor.
-var extractor = extract.New()
-
-func closeExtractor() { extractor.Close() }
-
-func sortedTypes() []string { return sources.Sorted() }
 
 func buildLake(cfg *config.Config, lg zerolog.Logger) (out.Lake, error) {
 	switch l := cfg.Common.Lake; l.Use {
@@ -48,19 +33,6 @@ func buildLake(cfg *config.Config, lg zerolog.Logger) (out.Lake, error) {
 	default:
 		return nil, fmt.Errorf("ERR010: unsupported lake %q", l.Use)
 	}
-}
-
-func buildSource(cfg *config.Config, a config.Adapter, lg zerolog.Logger) (out.Source, error) {
-	return sources.Build(a, sources.Env{CommitEvery: cfg.Common.Defaults.CommitEvery, DataDir: cfg.Common.DataDir, TmpDir: tmpDir(cfg), Extractor: extractor}, lg)
-}
-
-// buildAdapter is buildSource with what the runner needs around it.
-func buildAdapter(cfg *config.Config, a config.Adapter, lf *logger.Factory) (core.Adapter, error) {
-	src, err := buildSource(cfg, a, lf.For("SRC:"+a.Name, color.New(color.FgCyan).SprintFunc()))
-	if err != nil {
-		return core.Adapter{}, fmt.Errorf("ERR012: adapter %s: %w", a.Name, err)
-	}
-	return core.Adapter{Name: a.Name, Type: a.Type, Source: src, Timeout: cfg.Common.Defaults.Timeout, Heartbeat: a.Heartbeat}, nil
 }
 
 func statePath(cfg *config.Config) string { return filepath.Join(cfg.Common.DataDir, "state.db") }

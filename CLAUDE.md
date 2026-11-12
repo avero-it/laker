@@ -41,8 +41,8 @@ Credentials of an agent's sources never leave the agent: never put a secret into
 index document, a run record or a log line (`pkg/redact` scrubs run errors). A new source also
 gets a `Stub()` (for `config generate`) and a `Probe()` (for `config validate`).
 
-laker + laker-agent: see `docs/SPEC.md` §11. An agent runs the same sources with
-`agentclient` as its `out.Ingest`; laker validates every commit (`core.ValidateCommit`: a
+laker + laker-agent: see `docs/SPEC.md` §11. laker reads no source itself (its config has no
+`adapters`): the sources run only in laker-agent, with `agentclient` as its `out.Ingest`; laker validates every commit (`core.ValidateCommit`: a
 source writes only under its own prefixes) and re-hashes every blob it receives.
 
 Hexagonal: core depends on `ports/out` interfaces; adapters implement them; `cmd/laker` wires them.
@@ -58,7 +58,6 @@ laker config create  # example config.yaml
 laker config validate
 laker serve --check  # prints LAKER_CHECK_RESULT {json}; exit 0 ok, 1 fails
 laker serve
-laker run <adapter> [--dry-run]
 laker list | search <q> | show <sha> | get <sha|source:path> [--at] | ls <source>[:dir] [--at]
 laker reindex | state rebuild [--force] | snapshot | restore
 laker verify [--hash N | --hash-all] [--json]   # read-only check of the lake; exit 1 if unsound
@@ -66,7 +65,7 @@ laker views          # DuckDB SQL over the lake
 ```
 
 With `common.web.enabled`, serve keeps the state and index open for its whole life; the CLI
-commands that need them (`search`, `show`, `ls`, `list`, `run`, `snapshot`) go through serve's
+commands that need them (`search`, `show`, `ls`, `list`, `snapshot`) go through serve's
 `/api/*` when it answers (`cmd/laker/remote.go`), and open the local files otherwise. The web
 pages are `html/template` in `intern/adapters/web/templates`; never mark indexed or mail content
 as `template.HTML` without escaping it first (see `markFragment`, `safeHTML`).
@@ -81,7 +80,7 @@ The sqldb tests need real servers and are skipped otherwise:
 A new source implements `out.Source`: read the checkpoint with `rs.GetState`, put each content
 with `rs.PutBlob`, append rows with `parquetx.Append(rs, prefix, row)`, index with
 `rs.IndexMail/IndexFile`, stage the new checkpoint with `rs.SetState`, and `rs.Commit` every
-`commitevery` items. Register it in `cmd/laker/builders.go`.
+`commitevery` items. Register it in `intern/adapters/sources` (registry), used by `cmd/laker-agent`.
 
 ## Search index
 
