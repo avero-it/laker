@@ -60,7 +60,7 @@ func buildAdapter(cfg *config.Config, a config.Adapter, lf *logger.Factory) (cor
 	if err != nil {
 		return core.Adapter{}, fmt.Errorf("ERR012: adapter %s: %w", a.Name, err)
 	}
-	return core.Adapter{Name: a.Name, Type: a.Type, Source: src, Timeout: cfg.Common.Defaults.Timeout}, nil
+	return core.Adapter{Name: a.Name, Type: a.Type, Source: src, Timeout: cfg.Common.Defaults.Timeout, Heartbeat: a.Heartbeat}, nil
 }
 
 func statePath(cfg *config.Config) string { return filepath.Join(cfg.Common.DataDir, "state.db") }

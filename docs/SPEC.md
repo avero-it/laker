@@ -73,7 +73,8 @@ laker/
 │   ├── domain/           rows (MailRow, FileRow, TextRow, DB changelog), index docs, state keys, lake keys
 │   └── ports/out/        Lake, Source + RunSink, Ingest, StateStore, Indexer
 ├── intern/adapters/      lake, sources (+ registry), indexer, state, web, agentapi, agentclient
-├── pkg/                  config, logger (+betterstack), signaler, version, parquetx, glob, extract, agentkey
+├── pkg/                  config, logger (+betterstack), signaler, version, parquetx, glob, extract, agentkey,
+│                         redact, heartbeat
 └── deploy/  docs/  Dockerfile  makefile  vendor/
 ```
 
@@ -285,6 +286,7 @@ s3://<bucket>/
 | `laker show <sha256>` | a message (headers and text) or where a file content is |
 | `laker get <sha256\|source:path> [--at date] [-o file]` | download an original |
 | `laker ls <source>[:dir] [--at date]` | browse files, now or in the past |
+| `laker verify [--hash N\|--hash-all] [--json]` | check the lake against its manifests and rows, reading only (§9.6) |
 | `laker views` | DuckDB SQL: `mail`, `mail_messages`, `files`, `files_history`, `files_text`, and per table `db_<source>_<schema>_<table>`, `…_history`, macro `…_at(ts)` |
 
 ### 6.3 Web UI
@@ -350,7 +352,7 @@ error), `${VAR}` in any value is read from the environment, `laker config valida
 at once. `laker config create` writes a commented example.
 
 ```yaml
-schemaversion: 2
+schemaversion: 3
 common:
   id: { name: laker }
   timezone: Europe/Rome
@@ -378,6 +380,7 @@ adapters:
     enabled: true
     type: imap                       # imap | fs | postgres | mysql
     schedule: "@every 10m"           # 6-field cron with seconds, @every, @hourly, or manual
+    heartbeat: ${MAIL_HEARTBEAT_URL} # optional: uptime monitor told how every run ended (§8.1)
     params: { host: imap.example.com, username: me@example.com, password: ${IMAP_PASS}, folders: ["*"] }
   - name: files-home
     enabled: true
@@ -406,6 +409,17 @@ prints `LAKER_CHECK_RESULT {json}`, writing nothing.
 - Unique codes (prefix = level, error values always `ERR`, three hex digits per package block);
   `TestErrorCodesAreUnique` and `TestEveryLogLineHasACode` enforce them.
 
+### 8.1 Heartbeats
+
+A source that stops being read loses data silently (WhatsApp unlinks a device offline for two weeks), and
+logs do not say that nothing happened. An adapter, of laker or of an agent, may have a `heartbeat`: the
+address of an uptime monitor (a Better Stack heartbeat, healthchecks.io) that `pkg/heartbeat` calls after
+every run that is not a dry run: as it is when the run succeeded, with `/fail` appended when it failed.
+The monitor, set to the period of the schedule plus some grace, then warns when the source fails, when it
+stops running and when the whole process is down. Nothing about the run is sent. The address holds a
+token: it is never logged nor quoted in an error, and belongs in a `${VARIABLE}`. A monitor that cannot be
+reached is a warning (`WRN104`), never a failed run.
+
 ---
 
 ## 9. Decisions
@@ -423,6 +437,13 @@ prints `LAKER_CHECK_RESULT {json}`, writing nothing.
    each message is, the latest tree of each source, the live rows of each database table. `state rebuild`
    writes into a scratch file that replaces the state only when complete.
 5. **English only** in the repository.
+6. **The lake can be checked without Laker's derived data**: `laker verify` reads only the bucket and
+   writes nothing. It checks that every file of every manifest is there, that every Parquet file can be
+   read, that every content named by a mail, file or chat row is there, and that contents still hash to
+   their names (100 picked at random by default, `--hash-all` for all: that reads the whole lake). It
+   exits 1 if anything is missing or damaged. Parquet files of no manifest and contents no row names are
+   what an interrupted run leaves: reported, not errors. It reads what refers before what is referred to,
+   so it can run while `laker serve` ingests.
 
 ---
 
@@ -516,7 +537,7 @@ laker: `common.agents.enabled: true` (needs `common.web`, whose listener it uses
 (`laker-agent.yaml`, see §11.7 to write it):
 
 ```yaml
-schemaversion: 1
+schemaversion: 2
 agent:
   name: home
   server: https://laker.example.com

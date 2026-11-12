@@ -4,7 +4,7 @@ import "time"
 
 // SchemaVersion is the shape of Config this build expects. It goes up by one
 // whenever a yaml key is added, renamed, removed or changes type.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 type Config struct {
 	SchemaVersion int       `yaml:"schemaversion"`
@@ -128,6 +128,11 @@ type Adapter struct {
 	Type    string `yaml:"type"`
 	// Schedule is a 6-field cron expression (with seconds), a descriptor such
 	// as "@every 10m" or "@hourly", or "manual" (only `laker run`).
-	Schedule string         `yaml:"schedule"`
-	Params   map[string]any `yaml:"params"`
+	Schedule string `yaml:"schedule"`
+	// Heartbeat, optional, is the address of an uptime monitor (Better Stack
+	// heartbeat, healthchecks.io) called after every run: as it is when the
+	// run succeeded, with /fail appended when it failed. The monitor then
+	// warns when the source fails or stops running.
+	Heartbeat string         `yaml:"heartbeat"`
+	Params    map[string]any `yaml:"params"`
 }

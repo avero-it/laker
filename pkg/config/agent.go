@@ -9,7 +9,7 @@ import (
 )
 
 // AgentSchemaVersion is the shape of AgentConfig this build expects.
-const AgentSchemaVersion = 1
+const AgentSchemaVersion = 2
 
 // AgentConfig is the configuration of laker-agent: where laker serve is, and
 // the adapters this agent runs near the data.

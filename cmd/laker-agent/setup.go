@@ -163,7 +163,7 @@ func existing(path string) (config.AgentCommon, []config.GenAdapter, bool) {
 	}
 	var adapters []config.GenAdapter
 	for _, a := range cfg.Adapters {
-		g := config.GenAdapter{Name: a.Name, Type: a.Type, Enabled: a.Enabled, Schedule: a.Schedule}
+		g := config.GenAdapter{Name: a.Name, Type: a.Type, Enabled: a.Enabled, Schedule: a.Schedule, Heartbeat: a.Heartbeat}
 		keys := make([]string, 0, len(a.Params))
 		for k := range a.Params {
 			keys = append(keys, k)

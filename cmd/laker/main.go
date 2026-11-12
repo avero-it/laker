@@ -148,6 +148,27 @@ func setupCLI() *cobra.Command {
 		Run:   func(cmd *cobra.Command, args []string) { commandRestore(configPath) },
 	}
 
+	verifyCmd := &cobra.Command{
+		Use:   "verify",
+		Short: "Check that the lake holds everything its manifests and rows name, reading only",
+		Long: "Verify reads the lake and writes nothing: every file of every manifest is there, every Parquet file\n" +
+			"can be read, every content named by a row is there, and a sample of the contents still hash to their\n" +
+			"names. It needs neither the local state nor the index, and can run while laker serve does.\n" +
+			"Exit status 1 if something is missing or damaged.",
+		Args: cobra.NoArgs,
+		Run: func(cmd *cobra.Command, args []string) {
+			hash, _ := cmd.Flags().GetInt("hash")
+			if all, _ := cmd.Flags().GetBool("hash-all"); all {
+				hash = -1
+			}
+			asJSON, _ := cmd.Flags().GetBool("json")
+			commandVerify(configPath, hash, asJSON)
+		},
+	}
+	verifyCmd.Flags().Int("hash", 100, "download and hash again this many contents, picked at random (0: none)")
+	verifyCmd.Flags().Bool("hash-all", false, "download and hash again every content: reads the whole lake")
+	verifyCmd.Flags().Bool("json", false, "print the report as JSON")
+
 	viewsCmd := &cobra.Command{
 		Use:   "views",
 		Short: "Print the DuckDB SQL that exposes the lake as views (mail, files, database tables)",
@@ -218,7 +239,7 @@ func setupCLI() *cobra.Command {
 	configCmd.AddCommand(configCreateCmd, configValidateCmd)
 
 	rootCmd.AddCommand(serveCmd, runCmd, listCmd, searchCmd, showCmd, getCmd, lsCmd,
-		reindexCmd, stateCmd, snapshotCmd, restoreCmd, viewsCmd, agentsCmd, typesCmd, versionCmd, configCmd)
+		reindexCmd, stateCmd, snapshotCmd, restoreCmd, verifyCmd, viewsCmd, agentsCmd, typesCmd, versionCmd, configCmd)
 	return rootCmd
 }
 

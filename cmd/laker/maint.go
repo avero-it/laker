@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"os"
 
@@ -155,4 +158,71 @@ func commandRestore(configPath string) {
 		fatalf("ERR080: %v", err)
 	}
 	lg.Info().Strs("keys", keys).Msg("INF072: restored; runs after the snapshot are read again at the next run (blobs are not duplicated)")
+}
+
+// commandVerify reads the lake and reports what is missing or damaged; it
+// opens neither the state nor the index.
+func commandVerify(configPath string, hash int, asJSON bool) {
+	cfg := mustConfig(configPath)
+	lf := newLoggers(cfg)
+	defer lf.Close()
+	lg := lf.For("VERIFY", color.New(color.FgHiBlack).SprintFunc())
+	ctx, cancel := signaler.Context(context.Background(), lf.For("SIG", color.New(color.FgHiBlack).SprintFunc()))
+	defer cancel()
+
+	lake, err := buildLake(cfg, lf.For("LAKE", color.New(color.FgGreen).SprintFunc()))
+	if err != nil {
+		fatalf("ERR0C0: %v", err)
+	}
+	opts := core.VerifyOptions{Hash: hash}
+	if !asJSON { // the logs share stdout with the report: JSON goes alone
+		opts.Progress = func(step string) { lg.Info().Msgf("INF00A: %s", step) }
+	}
+	rep, err := core.Verify(ctx, lake, opts)
+	if err != nil {
+		fatalf("ERR0C1: the lake could not be verified: %v", err)
+	}
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		_ = enc.Encode(rep)
+	} else {
+		printVerify(os.Stdout, rep)
+	}
+	if !rep.OK() {
+		lf.Close()
+		os.Exit(1)
+	}
+}
+
+func printVerify(w io.Writer, rep core.VerifyReport) {
+	fmt.Fprintf(w, "%d manifests, %d Parquet files, %d contents (%d named by rows), %d hashed again\n",
+		rep.Manifests, rep.ParquetFiles, rep.Blobs, rep.BlobRefs, rep.Hashed)
+	problem := func(what string, p core.Problems) {
+		if p.Count == 0 {
+			return
+		}
+		fmt.Fprintf(w, "\n%s: %d\n", what, p.Count)
+		for _, e := range p.Examples {
+			fmt.Fprintf(w, "  %s\n", e)
+		}
+		if p.Count > len(p.Examples) {
+			fmt.Fprintf(w, "  … and %d more\n", p.Count-len(p.Examples))
+		}
+	}
+	problem("MANIFESTS THAT CANNOT BE READ", rep.BadManifests)
+	problem("FILES OF A MANIFEST MISSING FROM THE LAKE", rep.MissingFiles)
+	problem("PARQUET FILES THAT CANNOT BE READ", rep.BadParquet)
+	problem("CONTENTS NAMED BY A ROW MISSING FROM THE LAKE", rep.MissingBlobs)
+	problem("CONTENTS THAT DO NOT HASH TO THEIR NAME", rep.CorruptBlobs)
+	problem("OBJECTS UNDER blobs/ THAT ARE NOT CONTENTS", rep.MisplacedKeys)
+	if rep.UnlistedFiles.Count > 0 || rep.UnreferencedBlobs > 0 {
+		fmt.Fprintf(w, "\nleft by interrupted runs, harmless: %d Parquet files of no manifest (their rows are read all the same), %d contents no row names\n",
+			rep.UnlistedFiles.Count, rep.UnreferencedBlobs)
+	}
+	if rep.OK() {
+		fmt.Fprintln(w, "\nthe lake is sound")
+	} else {
+		fmt.Fprintln(w, "\nTHE LAKE IS NOT SOUND")
+	}
 }

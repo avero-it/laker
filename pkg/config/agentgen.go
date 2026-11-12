@@ -23,12 +23,14 @@ type GenParam struct {
 // GenAdapter is an adapter written by `laker-agent config generate` or
 // `config discover`, with comments.
 type GenAdapter struct {
-	Name     string     `json:"name"`
-	Type     string     `json:"type"`
-	Enabled  bool       `json:"enabled"`
-	Schedule string     `json:"schedule"`
-	Comment  string     `json:"comment,omitempty"` // above the adapter
-	Params   []GenParam `json:"params"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Enabled  bool   `json:"enabled"`
+	Schedule string `json:"schedule"`
+	// Heartbeat is written only when set.
+	Heartbeat string     `json:"heartbeat,omitempty"`
+	Comment   string     `json:"comment,omitempty"` // above the adapter
+	Params    []GenParam `json:"params"`
 }
 
 // AgentDefaults guesses the agent section for this machine.
@@ -129,8 +131,11 @@ func RenderAgent(c AgentCommon, adapters []GenAdapter) []byte {
 			key("enabled", ""), scalar(a.Enabled),
 			key("type", ""), scalar(a.Type),
 			key("schedule", ""), scalar(a.Schedule),
-			key("params", ""), params,
 		)
+		if a.Heartbeat != "" {
+			item.Content = append(item.Content, key("heartbeat", ""), scalar(a.Heartbeat))
+		}
+		item.Content = append(item.Content, key("params", ""), params)
 		item.HeadComment = a.Comment
 		list.Content = append(list.Content, item)
 	}
@@ -140,7 +145,8 @@ func RenderAgent(c AgentCommon, adapters []GenAdapter) []byte {
 		key("agent", ""), agent,
 		key("adapters", "Adapter names are source names in the lake: unique across laker and all its agents.\n"+
 			"Secrets are ${VARIABLES}: set them in the environment or in laker-agent.env next to this file.\n"+
-			"schedule: 6-field cron with seconds (\"0 0 3 * * *\"), @every 10m, @hourly, or manual."), list,
+			"schedule: 6-field cron with seconds (\"0 0 3 * * *\"), @every 10m, @hourly, or manual.\n"+
+			"heartbeat (optional): address of an uptime monitor called after every run, with /fail when it failed."), list,
 	)}}
 	doc.HeadComment = "laker-agent configuration. Check it with: laker-agent config validate"
 

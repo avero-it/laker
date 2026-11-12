@@ -143,5 +143,11 @@ func validateAdapters(e *errs, adapters []Adapter, knownTypes map[string]bool) {
 				e.add(fmt.Errorf("ERR720: %s: schedule %q: %v", where, a.Schedule, err))
 			}
 		}
+		if a.Heartbeat != "" {
+			// the address holds a token: it is not quoted
+			if u, err := url.Parse(a.Heartbeat); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+				e.add(fmt.Errorf("ERR728: %s: heartbeat must be an absolute http(s) URL", where))
+			}
+		}
 	}
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/avero-it/laker/intern/core/domain"
 	"github.com/avero-it/laker/intern/core/ports/out"
 	"github.com/avero-it/laker/pkg/config"
+	"github.com/avero-it/laker/pkg/heartbeat"
 	"github.com/avero-it/laker/pkg/logger"
 	"github.com/avero-it/laker/pkg/signaler"
 	"github.com/avero-it/laker/pkg/version"
@@ -87,6 +88,7 @@ func commandServe(configPath string) {
 
 	stores := buildStores(cfg, serveWait)
 	runner := core.LocalRunner(lake, stores, lf.For("CORE", color.New(color.FgWhite).SprintFunc()))
+	runner.Beat = heartbeat.Ping
 	loc, _ := time.LoadLocation(cfg.Common.Timezone)
 
 	// the adapters of this laker own their sources: no agent may write them
@@ -225,6 +227,7 @@ func commandRun(configPath, name string, dryRun bool) {
 		fatalf("ERR043: %v", err)
 	}
 	runner := core.LocalRunner(lake, buildStores(cfg, cliWait), lf.For("CORE", color.New(color.FgWhite).SprintFunc()))
+	runner.Beat = heartbeat.Ping
 	run := runner.Run(ctx, adapter, dryRun)
 	if run.Status != domain.RunOK {
 		os.Exit(1)

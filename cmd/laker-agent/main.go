@@ -29,6 +29,7 @@ import (
 	"github.com/avero-it/laker/pkg/agentkey"
 	"github.com/avero-it/laker/pkg/config"
 	"github.com/avero-it/laker/pkg/extract"
+	"github.com/avero-it/laker/pkg/heartbeat"
 	"github.com/avero-it/laker/pkg/logger"
 	"github.com/avero-it/laker/pkg/signaler"
 	"github.com/avero-it/laker/pkg/version"
@@ -234,6 +235,7 @@ func newAgent(cfg *config.AgentConfig, lf *logger.Factory, wait time.Duration) *
 			return st, release, err
 		},
 		Logger: lf.For("CORE", color.New(color.FgWhite).SprintFunc()),
+		Beat:   heartbeat.Ping,
 	}
 	return &agent{cfg: cfg, lf: lf, key: key, client: client, runner: runner, extractor: extract.New()}
 }
@@ -246,7 +248,7 @@ func (a *agent) adapter(c config.Adapter) (core.Adapter, error) {
 	if err != nil {
 		return core.Adapter{}, fmt.Errorf("ERR806: adapter %s: %w", c.Name, err)
 	}
-	return core.Adapter{Name: c.Name, Type: c.Type, Source: src, Timeout: a.cfg.Agent.Defaults.Timeout}, nil
+	return core.Adapter{Name: c.Name, Type: c.Type, Source: src, Timeout: a.cfg.Agent.Defaults.Timeout, Heartbeat: c.Heartbeat}, nil
 }
 
 // waitApproval presents the agent until laker approves it.

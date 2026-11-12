@@ -1,5 +1,5 @@
 # Laker configuration. ${VAR} in any value is read from the environment.
-schemaversion: 2
+schemaversion: 3
 
 common:
   id:
@@ -56,11 +56,15 @@ common:
 
 # Active adapters: type + params + schedule (6-field cron with seconds,
 # @every 10m, @hourly, or manual). `laker types` lists the known types.
+# heartbeat (optional) is the address of an uptime monitor (a Better Stack
+# heartbeat, healthchecks.io) called after every run, with /fail appended when
+# the run failed: the monitor warns when the source fails or stops running.
 adapters: []
 #  - name: mail-personal
 #    enabled: true
 #    type: imap
 #    schedule: "@every 10m"
+#    heartbeat: ${MAIL_HEARTBEAT_URL}
 #    params:
 #      host: imap.gmail.com
 #      port: 993

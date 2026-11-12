@@ -27,6 +27,9 @@ type Adapter struct {
 	Type    string
 	Source  out.Source
 	Timeout time.Duration
+	// Heartbeat, if set, is the address Runner.Beat is called with after
+	// every run that is not a dry run.
+	Heartbeat string
 }
 
 // Runner executes one run of an adapter: the source reads from its origin
@@ -37,6 +40,22 @@ type Runner struct {
 	State  func() (out.StateStore, func(), error)
 	Logger zerolog.Logger
 	Now    func() time.Time
+	// Beat tells the monitor at url how a run ended (heartbeat.Ping); nil:
+	// no heartbeats.
+	Beat func(ctx context.Context, url string, ok bool) error
+}
+
+// beat reports the end of a run to the monitor of the adapter, if it has
+// one. The run is over, and its context may be too: the report has its own.
+func (r *Runner) beat(ctx context.Context, a Adapter, run domain.Run, lg zerolog.Logger) {
+	if r.Beat == nil || a.Heartbeat == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	if err := r.Beat(ctx, a.Heartbeat, run.Status == domain.RunOK); err != nil {
+		lg.Warn().Msgf("WRN104: %v", err)
+	}
 }
 
 // LocalRunner is the runner of laker serve: everything in this process.
@@ -89,7 +108,11 @@ func (r *Runner) Run(ctx context.Context, a Adapter, dryRun bool) domain.Run {
 
 	state, release, err := r.State()
 	if err != nil {
-		return finish(fmt.Errorf("ERR103: cannot open the local state: %w", err))
+		failed := finish(fmt.Errorf("ERR103: cannot open the local state: %w", err))
+		if !dryRun {
+			r.beat(ctx, a, failed, lg)
+		}
+		return failed
 	}
 	defer release()
 
@@ -121,7 +144,9 @@ func (r *Runner) Run(ctx context.Context, a Adapter, dryRun bool) domain.Run {
 		if err = state.Apply(rec); err == nil {
 			err = ingest.Finish(ctx, run)
 		}
-		return finish(err)
+		done := finish(err)
+		r.beat(ctx, a, done, lg)
+		return done
 	}
 	// a failed run is recorded too (never its checkpoint), so the status
 	// pages show why; best effort: the run has failed already
@@ -133,6 +158,7 @@ func (r *Runner) Run(ctx context.Context, a Adapter, dryRun bool) domain.Run {
 	if ferr := ingest.Finish(context.WithoutCancel(ctx), failed); ferr != nil {
 		lg.Warn().Str("error", redact.String(ferr.Error())).Msg("WRN103: cannot report the failed run")
 	}
+	r.beat(ctx, a, failed, lg)
 	return failed
 }
 

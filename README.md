@@ -140,6 +140,7 @@ derived from the lake and restorable (`laker restore`, or `laker reindex` + `lak
 | `laker list` · `laker agents [approve\|revoke <id>]` | adapters and their runs, agents |
 | `laker views` | DuckDB SQL over the lake |
 | `laker reindex` · `laker state rebuild` · `laker snapshot` · `laker restore` | derived data |
+| `laker verify [--hash-all]` | check that nothing in the lake is missing or damaged |
 | `laker-agent serve\|id\|run\|list` | the agent |
 | `laker-agent config generate\|discover\|validate` | write and check its configuration |
 

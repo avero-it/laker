@@ -33,7 +33,8 @@ intern/adapters/      lake/{s3,fs}, sources/{imap,fs,sqldb,telegram,whatsapp,cha
                       mcp (read-only MCP tools at /mcp), oauth (its authorization server, oauth.db)
 intern/coretest/      a real Runner on temp dirs, for tests
 pkg/                  config (viper, strict; laker and agent), logger (+betterstack), signaler, version,
-                      parquetx, glob, extract, agentkey (Ed25519 identity, request signatures), redact
+                      parquetx, glob, extract, agentkey (Ed25519 identity, request signatures), redact,
+                      heartbeat (tells an uptime monitor how each run ended)
 ```
 
 Credentials of an agent's sources never leave the agent: never put a secret into a commit, an
@@ -60,6 +61,7 @@ laker serve
 laker run <adapter> [--dry-run]
 laker list | search <q> | show <sha> | get <sha|source:path> [--at] | ls <source>[:dir] [--at]
 laker reindex | state rebuild [--force] | snapshot | restore
+laker verify [--hash N | --hash-all] [--json]   # read-only check of the lake; exit 1 if unsound
 laker views          # DuckDB SQL over the lake
 ```
 

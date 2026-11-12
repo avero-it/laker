@@ -79,16 +79,22 @@ func TestValidateReportsEveryProblem(t *testing.T) {
 		Adapters: []Adapter{
 			{Name: "mail", Type: "imap", Schedule: "@every 10m"},
 			{Name: "mail", Type: "pop3", Schedule: "every day"},
+			{Name: "files", Type: "imap", Schedule: "manual", Heartbeat: "uptime.example.com/secret-token"},
+			{Name: "docs", Type: "imap", Schedule: "manual", Heartbeat: "https://uptime.example.com/api/v1/heartbeat/abc"},
 		},
 	}
 	err := Validate(cfg, types)
 	if err == nil {
 		t.Fatal("expected errors")
 	}
-	for _, code := range []string{"ERR713", "ERR717", "ERR718", "ERR71E", "ERR71F", "ERR720"} {
+	for _, code := range []string{"ERR713", "ERR717", "ERR718", "ERR71E", "ERR71F", "ERR720", "ERR728"} {
 		if !strings.Contains(err.Error(), code) {
 			t.Errorf("missing %s in:\n%v", code, err)
 		}
+	}
+	// one bad heartbeat, reported without its address (it holds a token)
+	if strings.Count(err.Error(), "ERR728") != 1 || strings.Contains(err.Error(), "secret-token") {
+		t.Errorf("heartbeat errors:\n%v", err)
 	}
 }
 
