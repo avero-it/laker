@@ -128,5 +128,7 @@ contents, nor credentials.
 Develop on the designated branch; "release" means stage, commit, merge into `main`, delete the
 branch, tag `v0.<minor>.<patch>`, push branch and tag. Confirm the version before tagging.
 Pushing the tag runs `.github/workflows/release.yml` (GoReleaser, `.goreleaser.yaml`): archives, `.deb`/`.rpm`/`.apk`,
-Homebrew formulas, Scoop manifest; `apt.yml` then publishes the signed apt repository. Dry run:
+Homebrew formulas, Scoop manifest; `apt.yml` then publishes the GitHub Pages site: the signed apt
+repository, the website (`website/`, via `scripts/build-website.sh`) and its changelog
+(`scripts/build-changelog.sh`, from the git history between releases). Dry run:
 `TAP_GITHUB_TOKEN= goreleaser release --snapshot --clean --skip=publish`. Packaging files live in `packaging/`.

@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Laker – a personal data lake</title>
+<meta name="description" content="Laker is a personal data lake in a single Go binary: it copies your mailboxes, files, chats and small databases into an S3 bucket in open formats, never deletes anything, and lets you search and browse all of it, as it is today or as it was on any past date.">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#">laker</a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#claude">Claude</a>
+      <a href="#install">Install</a>
+      <a href="#start">Quick start</a>
+      <a href="changelog.html">Changelog</a>
+      <a href="https://github.com/avero-it/laker">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<div class="wrap">
+  <div class="hero">
+    <p><a class="badge" href="https://github.com/avero-it/laker/releases/tag/__VERSION__">__VERSION__</a></p>
+    <h1>All your data, kept forever, found in a second</h1>
+    <p class="lead"><strong>Laker</strong> is a personal data lake in a single Go binary. It copies your <strong>mailboxes</strong>, <strong>files</strong>, <strong>chats</strong> and small <strong>databases</strong> into an S3 bucket in open formats, never deletes anything, and lets you search and browse all of it from one web page, including how things were on any past date.</p>
+    <div class="actions">
+      <a class="btn" href="#install">Install</a>
+      <a class="btn alt" href="https://github.com/avero-it/laker">View on GitHub</a>
+    </div>
+
+    <div class="flow" role="img" aria-label="laker-agent, next to the data, sends what it reads over signed HTTPS to laker serve, which writes the lake into an S3 bucket">
+      <div class="node"><b>laker-agent</b><span>laptop, NAS, office LAN: IMAP, files, Postgres, MySQL, Telegram, WhatsApp</span></div>
+      <div class="arrow">HTTPS, signed<br>outbound only</div>
+      <div class="node main"><b>laker serve</b><span>the lake, the search index, the web UI, MCP for Claude</span></div>
+      <div class="arrow">append-only</div>
+      <div class="node"><b>S3 bucket</b><span>originals, Parquet, JSON manifests: readable without Laker</span></div>
+    </div>
+  </div>
+</div>
+
+<section id="features" class="alt">
+  <div class="wrap">
+    <h2>One place for everything you don’t want to lose</h2>
+    <p class="sub">Every source is copied as it is, every change is recorded, and nothing is ever overwritten. Everything outside the bucket (the search index, the local state) is derived and can be rebuilt from it.</p>
+
+    <article class="feature">
+      <div class="ftext">
+        <h3>Search mail, chats and files at once</h3>
+        <p>One box searches every message, chat and document, with highlighted matches. Text inside PDF, Office, OpenDocument and HTML files is searchable too.</p>
+        <p>Every text is indexed in Italian and in English at the same time, so mixed messages work without language detection: <code>invoice</code> finds <code>invoices</code>, and accents don’t matter.</p>
+        <p class="keys"><code>from:</code> · <code>subject:</code> · <code>ext:pdf</code> · <code>kind:mail</code> · <code>"exact phrase"</code> · <code>-word</code></p>
+      </div>
+      <figure class="mock" role="img" aria-label="Laker's search page: a query for invoice ext:pdf with three results, a mail, a file and a chat, each with a highlighted fragment">
+        <div class="chrome"><i></i><i></i><i></i><span class="url">laker.example.com/?q=invoice</span></div>
+        <div class="appbar"><b>Laker</b><span class="on">Search</span><span>Files</span><span>Status</span><span>Agents</span><span>Connectors</span></div>
+        <div class="body">
+          <div class="field"><span>invoice from:acme</span><em class="b">Search</em></div>
+          <div class="meta">3 results · 12 ms</div>
+          <div class="hit">
+            <div class="t"><span class="tag">mail</span>Your March invoice</div>
+            <div class="meta">2026-03-04 · billing@acme.example · home-mail/INBOX</div>
+            <p>… please find attached the <mark>invoice</mark> for March, due within 30 days …</p>
+          </div>
+          <div class="hit">
+            <div class="t"><span class="tag">file</span>acme-2026-03.pdf</div>
+            <div class="meta">2026-03-04 · 84 KB · laptop:Documents/bills</div>
+            <p>… <mark>Invoice</mark> no. 2026/0311 · ACME Services Ltd …</p>
+          </div>
+          <div class="hit">
+            <div class="t"><span class="tag">chat</span>Family</div>
+            <div class="meta">2026-03-05 · Sam · telegram</div>
+            <p>… did the acme <mark>invoice</mark> arrive? …</p>
+          </div>
+        </div>
+      </figure>
+    </article>
+
+    <article class="feature">
+      <div class="ftext">
+        <h3>Your files, as they were on any date</h3>
+        <p>Every content is stored once (by its SHA-256) and every add, change, move and delete is recorded. Pick a date and the folder shows exactly what it held then; every file has its full history, and every past version can be downloaded.</p>
+        <p class="keys"><code>laker ls laptop:Documents --at 2026-01-31</code> · <code>laker get laptop:notes.md --at 2026-01-31</code></p>
+      </div>
+      <figure class="mock" role="img" aria-label="Laker's files page showing the Documents folder of the laptop source as it was on 31 January 2026, with the history of one file">
+        <div class="chrome"><i></i><i></i><i></i><span class="url">laker.example.com/files/laptop?dir=Documents&amp;at=2026-01-31</span></div>
+        <div class="appbar"><b>Laker</b><span>Search</span><span class="on">Files</span><span>Status</span><span>Agents</span><span>Connectors</span></div>
+        <div class="body">
+          <div class="field"><span>As it was on 2026-01-31</span><em class="b">Show</em></div>
+          <div class="meta" style="margin-bottom:6px">laptop / Documents /</div>
+          <div class="scroll"><table>
+            <tr><th>Name</th><th class="r">Size</th><th>Modified</th><th></th></tr>
+            <tr><td><a>bills/</a> <span class="meta">(14 files)</span></td><td class="r">2.1 MB</td><td></td><td></td></tr>
+            <tr><td><a>notes.md</a></td><td class="r">6 KB</td><td class="meta">2026-01-29</td><td><a>history</a></td></tr>
+            <tr><td><a>lease.pdf</a></td><td class="r">310 KB</td><td class="meta">2025-09-02</td><td><a>history</a></td></tr>
+          </table></div>
+          <div class="meta" style="margin:12px 0 4px">History of notes.md</div>
+          <div class="scroll"><table>
+            <tr><th>Seen</th><th>Event</th><th class="r">Size</th><th></th></tr>
+            <tr><td>2026-02-10</td><td class="del">delete</td><td class="r"></td><td></td></tr>
+            <tr><td>2026-01-29</td><td class="warn">modify</td><td class="r">6 KB</td><td><a>download</a></td></tr>
+            <tr><td>2025-11-15</td><td class="ok">add</td><td class="r">4 KB</td><td><a>download</a></td></tr>
+          </table></div>
+        </div>
+      </figure>
+    </article>
+
+    <article class="feature">
+      <div class="ftext">
+        <h3>Mail, kept as the original <code>.eml</code></h3>
+        <p>Every message of every IMAP folder is stored byte for byte, with its headers and text made searchable. Read it as text or as HTML, open the attachments, or download the <code>.eml</code>.</p>
+        <p>The HTML version is sanitized and shown in a sandbox; remote images, which track the reader, stay blocked until you ask for them.</p>
+      </div>
+      <figure class="mock" role="img" aria-label="Laker's mail page: a message with its headers, text, an attachment and a download of the original .eml">
+        <div class="chrome"><i></i><i></i><i></i><span class="url">laker.example.com/mail/3f9a…c21e</span></div>
+        <div class="appbar"><b>Laker</b><span class="on">Search</span><span>Files</span><span>Status</span><span>Agents</span><span>Connectors</span></div>
+        <div class="body">
+          <dl class="hdr">
+            <dt>Subject</dt><dd><b>Your March invoice</b></dd>
+            <dt>From</dt><dd>billing@acme.example</dd>
+            <dt>To</dt><dd>me@example.com</dd>
+            <dt>Date</dt><dd>2026-03-04 09:12</dd>
+            <dt>Folder</dt><dd>home-mail / INBOX</dd>
+          </dl>
+          <div class="msg">
+            <p>Hello,</p>
+            <p>please find attached the invoice for March, due within 30 days.</p>
+            <p class="meta">Text · <a>HTML version</a> · remote images blocked</p>
+          </div>
+          <div class="att"><em class="b alt">acme-2026-03.pdf · 84 KB</em><em class="b alt">Download .eml</em></div>
+        </div>
+      </figure>
+    </article>
+
+    <article class="feature">
+      <div class="ftext">
+        <h3>Telegram and WhatsApp chats</h3>
+        <p>Private chats and groups, with photos and documents. Telegram makes a slow first export, then keeps in sync; WhatsApp runs as a linked device of your phone, from the history it gets at pairing onwards.</p>
+        <p>Edits and deletions become new records: a deleted message is kept and marked deleted.</p>
+      </div>
+      <figure class="mock" role="img" aria-label="Laker's chat page: a group chat with a photo, an edited message and a deleted message that is still kept">
+        <div class="chrome"><i></i><i></i><i></i><span class="url">laker.example.com/chat/whatsapp/…</span></div>
+        <div class="appbar"><b>Laker</b><span class="on">Search</span><span>Files</span><span>Status</span><span>Agents</span><span>Connectors</span></div>
+        <div class="body">
+          <b>Hiking club</b>
+          <div class="meta" style="margin-bottom:6px">whatsapp · 2026-05-02 – 2026-05-03 · <a>← earlier</a> · <a>later →</a></div>
+          <div class="hit"><div class="meta">2026-05-02 18:40 · <b>Alex</b></div>Meeting at the station at 7, see the map</div>
+          <div class="hit"><div class="meta">2026-05-02 18:41 · <b>Alex</b></div><a>route.jpg</a></div>
+          <div class="hit"><div class="meta">2026-05-02 19:05 · <b>Robin</b> · edited</div>I’ll bring the stove and two maps</div>
+          <div class="hit"><div class="meta">2026-05-03 06:12 · <b>Sam</b> · <span class="del">deleted</span></div><s>Running ten minutes late</s></div>
+        </div>
+      </figure>
+    </article>
+
+    <article class="feature">
+      <div class="ftext">
+        <h3>Databases, with the history of every row</h3>
+        <p>Postgres and MySQL/MariaDB are read in one consistent read-only snapshot and compared with the previous run: only inserts, updates and deletes are written. No <code>updated_at</code> column is needed, and deletions are seen.</p>
+        <p><code>laker views</code> prints DuckDB views over the lake: the latest rows, the full history, and a macro for any table as it was at a given time.</p>
+      </div>
+      <figure class="mock" role="img" aria-label="A DuckDB session querying the history of one row of a customers table created by laker views">
+        <div class="chrome"><i></i><i></i><i></i><span class="url">duckdb</span></div>
+        <div class="body">
+<pre class="tree">D <b>SELECT</b> _op, _seen_at, email
+  <b>FROM</b> db_shop_public_customers_history
+  <b>WHERE</b> _pk = '42' <b>ORDER BY</b> _seen_at;
+<span class="d">┌────────┬─────────────────────┬──────────────────────┐
+│  _op   │      _seen_at       │        email         │
+├────────┼─────────────────────┼──────────────────────┤</span>
+<span class="d">│</span> insert <span class="d">│</span> 2026-02-01 03:00:00 <span class="d">│</span> kim@old.example      <span class="d">│</span>
+<span class="d">│</span> update <span class="d">│</span> 2026-06-14 03:00:00 <span class="d">│</span> kim@new.example      <span class="d">│</span>
+<span class="d">│</span> delete <span class="d">│</span> 2026-10-30 03:00:00 <span class="d">│</span> kim@new.example      <span class="d">│</span>
+<span class="d">└────────┴─────────────────────┴──────────────────────┘</span></pre>
+        </div>
+      </figure>
+    </article>
+
+    <article class="feature">
+      <div class="ftext">
+        <h3>Agents next to the data</h3>
+        <p><code>laker-agent</code> runs where the data is (your laptop, a NAS, the office LAN) and sends what it reads to laker over signed HTTPS. Connections only go out, so nothing has to reach into your networks.</p>
+        <p>The credentials of its sources stay on the agent and never reach laker. Each agent has its own Ed25519 identity and is accepted only after you approve its ID; laker checks that every agent writes only its own sources and re-hashes everything it receives.</p>
+        <p class="keys"><code>laker-agent config discover</code> finds mail accounts and databases · <code>laker agents approve &lt;id&gt;</code></p>
+      </div>
+      <figure class="mock" role="img" aria-label="Laker's agents page: one approved agent and one pending agent waiting for approval">
+        <div class="chrome"><i></i><i></i><i></i><span class="url">laker.example.com/agents</span></div>
+        <div class="appbar"><b>Laker</b><span>Search</span><span>Files</span><span>Status</span><span class="on">Agents</span><span>Connectors</span></div>
+        <div class="body">
+          <p class="meta" style="margin:0 0 8px">A new agent shows up here as "pending" on its first contact. Approve it only if the ID is the one its laker-agent prints at start.</p>
+          <div class="scroll"><table>
+            <tr><th>Agent</th><th>ID</th><th>Status</th><th></th></tr>
+            <tr><td>laptop<div class="meta">mbp.local · __VERSION__</div></td><td class="meta mono">lkr-7c1e…</td><td class="ok">approved</td><td><a>Revoke</a></td></tr>
+            <tr><td>nas<div class="meta">nas.lan · __VERSION__</div></td><td class="meta mono">lkr-b24d…</td><td class="warn">pending</td><td><em class="b">Approve</em></td></tr>
+          </table></div>
+        </div>
+      </figure>
+    </article>
+
+    <article class="feature" id="claude">
+      <div class="ftext">
+        <h3>Ask Claude about your lake (MCP)</h3>
+        <p>Add Laker as a custom connector in Claude and ask about your mail, chats and files in plain words. The tools are read-only: search, read a document or a file’s text, list a folder now or at a date, show a file’s history.</p>
+        <p>Laker is its own OAuth server: a connector gets in only after you approve it with your web token, and the Connectors page revokes it at once.</p>
+        <p class="keys">Claude → Settings → Connectors → Add custom connector → <code>https://&lt;host&gt;/mcp</code></p>
+      </div>
+      <figure class="mock" role="img" aria-label="Laker's connectors page listing an approved Claude connector with a Revoke action">
+        <div class="chrome"><i></i><i></i><i></i><span class="url">laker.example.com/connectors</span></div>
+        <div class="appbar"><b>Laker</b><span>Search</span><span>Files</span><span>Status</span><span>Agents</span><span class="on">Connectors</span></div>
+        <div class="body">
+          <p class="meta" style="margin:0 0 8px">MCP clients, such as a Claude custom connector, read the lake at <code>https://laker.example.com/mcp</code>. Each one is approved once with the web token; revoking it ends its access at once.</p>
+          <div class="scroll"><table>
+            <tr><th>Client</th><th>Approved</th><th>Last used</th><th></th></tr>
+            <tr><td>Claude<div class="meta">registered 2026-11-12</div></td><td class="meta">2026-11-12</td><td class="meta">today</td><td><a>Revoke</a></td></tr>
+          </table></div>
+        </div>
+      </figure>
+    </article>
+
+    <article class="feature">
+      <div class="ftext">
+        <h3>Append-only, in open formats</h3>
+        <p>Nothing in the lake is ever deleted or overwritten, and it works with S3 Object Lock. The bucket stays readable without Laker: originals as they were, Parquet tables and JSON manifests.</p>
+        <p><code>laker verify</code> checks, reading only, that nothing is missing or damaged; snapshots of the index and state live in the bucket too, so a new server is back with <code>laker restore</code>.</p>
+      </div>
+      <figure class="mock" role="img" aria-label="The layout of the S3 bucket: blobs, mail, files, chat and db prefixes with Parquet files, and run manifests">
+        <div class="chrome"><i></i><i></i><i></i><span class="url">s3://my-lake</span></div>
+        <div class="body">
+<pre class="tree">blobs/sha256/ab/cd/<span class="d">&lt;sha256&gt;</span>               <span class="d"># .eml and original files</span>
+mail/messages/account=home-mail/month=2026-03/
+files/inventory/source=laptop/dt=2026-01-29/
+files/text/source=laptop/dt=2026-01-29/
+chat/messages/source=whatsapp/month=2026-05/
+db/shop/public.customers/changes/dt=2026-06-14/
+_runs/  _state/  _index/                  <span class="d"># manifests, snapshots</span>
+
+$ laker verify
+<span class="d">1284 manifests, 2310 Parquet files, 88512 contents (88512 named by rows), 0 hashed again</span>
+
+<span class="ok">the lake is sound</span></pre>
+        </div>
+      </figure>
+    </article>
+
+    <article class="feature">
+      <div class="ftext">
+        <h3>One binary, nothing else to run</h3>
+        <p>Pure Go, no cgo: one static binary for <code>laker</code> (Linux, macOS) and one for <code>laker-agent</code> (Linux, macOS, Windows). No Elasticsearch, no Tika, no database server; the index is local and is rebuilt from the bucket with <code>laker reindex</code>.</p>
+        <p>Packages for Homebrew, Scoop, apt, deb, rpm and apk; Docker images, systemd units and a Kubernetes manifest are in the repository.</p>
+      </div>
+      <figure class="mock" role="img" aria-label="Laker's status page: every source with its last run and the agent that runs it">
+        <div class="chrome"><i></i><i></i><i></i><span class="url">laker.example.com/status</span></div>
+        <div class="appbar"><b>Laker</b><span>Search</span><span>Files</span><span class="on">Status</span><span>Agents</span><span>Connectors</span></div>
+        <div class="body">
+          <p class="meta" style="margin:0 0 8px">Lake: s3://my-lake · Laker __VERSION__</p>
+          <div class="scroll"><table>
+            <tr><th>Adapter</th><th>Last run</th><th>Next</th></tr>
+            <tr><td>home-mail</td><td><span class="ok">ok</span> 4 min ago <span class="meta">12 rows</span></td><td class="meta">agent laptop</td></tr>
+            <tr><td>laptop</td><td><span class="ok">ok</span> 9 min ago <span class="meta">3 rows</span></td><td class="meta">agent laptop</td></tr>
+            <tr><td>whatsapp</td><td><span class="ok">ok</span> 1 min ago <span class="meta">27 rows</span></td><td class="meta">agent nas</td></tr>
+            <tr><td>shop</td><td><span class="ok">ok</span> 2 h ago <span class="meta">5 rows</span></td><td class="meta">agent nas</td></tr>
+            <tr><td>snapshot</td><td><span class="ok">ok</span> today 03:00</td><td class="meta">tomorrow 03:00</td></tr>
+          </table></div>
+        </div>
+      </figure>
+    </article>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>Install</h2>
+    <p class="sub">Latest release: <a href="https://github.com/avero-it/laker/releases/tag/__VERSION__">__VERSION__</a>. <code>laker</code> runs on Linux and macOS; <code>laker-agent</code> also on Windows.</p>
+    <div class="install">
+
+      <div class="card">
+        <h3>Homebrew <small>macOS, Linux</small></h3>
+        <div class="codebox"><pre class="code">brew install avero-it/tap/laker
+brew install avero-it/tap/laker-agent</pre></div>
+        <p class="sub" style="margin:8px 0 0">After writing the agent’s configuration, <code>brew services start laker-agent</code>; see the caveats brew prints.</p>
+      </div>
+
+      <div class="card">
+        <h3>Scoop <small>Windows · agent only</small></h3>
+        <div class="codebox"><pre class="code">scoop bucket add avero-it https://github.com/avero-it/scoop-bucket
+scoop install laker-agent</pre></div>
+      </div>
+
+      <div class="card">
+        <h3>apt <small>Debian, Ubuntu · amd64, arm64</small></h3>
+        <div class="codebox"><pre class="code">sudo curl -fsSL https://avero-it.github.io/laker/laker.gpg -o /usr/share/keyrings/laker.gpg
+echo "deb [signed-by=/usr/share/keyrings/laker.gpg] https://avero-it.github.io/laker stable main" | sudo tee /etc/apt/sources.list.d/laker.list
+sudo apt update &amp;&amp; sudo apt install laker laker-agent</pre></div>
+        <p class="sub" style="margin:8px 0 0">The repository is signed and updated with every release. The packages create the <code>laker</code> / <code>laker-agent</code> system users, install the systemd units and an example configuration, and start nothing.</p>
+      </div>
+
+      <div class="card">
+        <h3>deb, rpm, apk <small>Linux packages</small></h3>
+        <p class="sub" style="margin:0">Download from the <a href="https://github.com/avero-it/laker/releases/latest">releases page</a>, then:</p>
+        <div class="codebox"><pre class="code">sudo apt install ./laker_&lt;version&gt;_linux_amd64.deb
+sudo dnf install ./laker_&lt;version&gt;_linux_amd64.rpm
+sudo apk add --allow-untrusted ./laker_&lt;version&gt;_linux_amd64.apk</pre></div>
+      </div>
+
+      <div class="card">
+        <h3>Go <small>Go installed</small></h3>
+        <div class="codebox"><pre class="code">go install github.com/avero-it/laker/cmd/laker@latest
+go install github.com/avero-it/laker/cmd/laker-agent@latest</pre></div>
+      </div>
+
+      <div class="card">
+        <h3>Binaries, Docker</h3>
+        <p class="sub" style="margin:0">Static binaries and SHA-256 sums for every platform are on the <a href="https://github.com/avero-it/laker/releases/latest">releases page</a>. The <code>Dockerfile</code> builds both images, and <a href="https://github.com/avero-it/laker/tree/main/deploy"><code>deploy/</code></a> has docker compose, systemd units and a Kubernetes manifest.</p>
+        <div class="codebox"><pre class="code">docker build --target laker -t laker .
+docker build --target laker-agent -t laker-agent .</pre></div>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<section id="start" class="alt">
+  <div class="wrap">
+    <h2>Quick start</h2>
+    <p class="sub">On one machine, run both: <code>laker serve</code> and a <code>laker-agent</code> with <code>server: http://127.0.0.1:8090</code>. Elsewhere, <code>server</code> is the https address of laker’s reverse proxy.</p>
+    <ol class="steps">
+      <li>
+        <p><strong>laker</strong>: write the configuration (the bucket and the web token), check it, start it.</p>
+        <div class="codebox"><pre class="code">laker config create
+export LAKER_S3_ACCESS_KEY=… LAKER_S3_SECRET_KEY=… LAKER_WEB_TOKEN=…
+laker serve --check
+laker serve</pre></div>
+      </li>
+      <li>
+        <p><strong>laker-agent</strong>: generate its configuration, let it find your mail accounts and databases, check every source.</p>
+        <div class="codebox"><pre class="code">laker-agent config generate
+laker-agent config discover
+laker-agent config validate
+laker-agent serve</pre></div>
+      </li>
+      <li>
+        <p><strong>Approve the agent</strong> with the ID it prints, here or on the Agents page. Then open <code>http://127.0.0.1:8090</code> and search.</p>
+        <div class="codebox"><pre class="code">laker agents approve lkr-xxxxxxxx-xxxxxxxx-xxxxxxxx-xxxxxxxx</pre></div>
+      </li>
+    </ol>
+    <h3 style="margin-top:28px">A source in <code>laker-agent.yaml</code></h3>
+    <div class="codebox"><pre class="code">adapters:
+  - name: home-mail                 # the source name in the lake: unique across all agents
+    enabled: true
+    type: imap                      # imap | fs | postgres | mysql | telegram | whatsapp
+    schedule: "@every 10m"          # 6-field cron, @every, @hourly, or manual
+    params:
+      host: imap.example.com
+      username: me@example.com
+      password: ${IMAP_PASS}        # in laker-agent.env next to the configuration (mode 0600)</pre></div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>laker __VERSION__ · MIT © 2026 AVERO di Simone Baglioni</span>
+    <span><a href="https://github.com/avero-it/laker">Source</a> · <a href="changelog.html">Changelog</a> · <a href="https://github.com/avero-it/laker/releases">Releases</a> · <a href="https://github.com/avero-it/laker/blob/main/docs/SPEC.md">Full documentation</a></span>
+  </div>
+</footer>
+
+<script>
+// Copy buttons for code blocks (progressive enhancement).
+document.querySelectorAll("pre.code").forEach(function (pre) {
+  if (!navigator.clipboard) return;
+  var b = document.createElement("button");
+  b.className = "copy";
+  b.type = "button";
+  b.textContent = "Copy";
+  b.addEventListener("click", function () {
+    navigator.clipboard.writeText(pre.textContent).then(function () {
+      b.textContent = "Copied";
+      setTimeout(function () { b.textContent = "Copy"; }, 1500);
+    }, function () {});
+  });
+  pre.parentNode.appendChild(b);
+});
+</script>
+</body>
+</html>

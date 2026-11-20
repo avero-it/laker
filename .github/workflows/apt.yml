@@ -1,7 +1,7 @@
 name: apt repository
 
-# Publishes the GitHub Pages site (https://avero-it.github.io/laker): a signed apt repository built
-# from the .deb files of every release. It is a separate workflow because releases are immutable:
+# Publishes the GitHub Pages site (https://avero-it.github.io/laker): the project website (website/),
+# its changelog, and a signed apt repository built from the .deb files of every release. It is a separate workflow because releases are immutable:
 # a problem here must never force a new version. Run it by hand (`gh workflow run apt.yml`) to
 # rebuild at any time.
 on:
@@ -42,6 +42,8 @@ jobs:
 
       - uses: actions/checkout@v4
         if: steps.gate.outputs.enabled == 'true'
+        with:
+          fetch-depth: 0 # the changelog needs every tag and the history between them
 
       - name: Install apt-utils
         if: steps.gate.outputs.enabled == 'true'
@@ -61,6 +63,14 @@ jobs:
       - name: Build the signed repository
         if: steps.gate.outputs.enabled == 'true'
         run: scripts/build-apt-repo.sh debs site
+
+      - name: Build the website
+        if: steps.gate.outputs.enabled == 'true'
+        run: scripts/build-website.sh site "$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+
+      - name: Build the changelog
+        if: steps.gate.outputs.enabled == 'true'
+        run: scripts/build-changelog.sh site
 
       # Install from the freshly built repository, exactly as a user would (signature included).
       # A broken index fails here, before deploying.
