@@ -82,6 +82,30 @@ header.top .wrap {
   text-decoration: none;
 }
 
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand img { display: block; }
+
+/* The logo has a white background: in the light theme it melts into the page, in
+   the dark one it sits on a light card so its navy lettering stays readable. */
+.hero .logo {
+  display: block;
+  width: min(100%, 34rem);
+  height: auto;
+  margin: 0 auto 16px;
+  mix-blend-mode: multiply;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .hero .logo { mix-blend-mode: normal; background: #fff; border-radius: 12px; padding: 8px 12px; }
+}
+
+:root[data-theme="dark"] .hero .logo { mix-blend-mode: normal; background: #fff; border-radius: 12px; padding: 8px 12px; }
+
 nav a {
   margin-left: 16px;
   color: var(--muted);

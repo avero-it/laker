@@ -1,4 +1,4 @@
-# Laker
+<h1 align="center"><img src="docs/logo.png" alt="Laker" width="560"></h1>
 
 A personal data lake in a single Go binary. Laker copies your **mailboxes**, **files** and small
 **databases** into an S3 bucket in open formats, never deletes anything, and lets you **search and
